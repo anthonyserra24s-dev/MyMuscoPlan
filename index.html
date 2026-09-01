@@ -292,7 +292,7 @@ main#views{padding:16px 16px 24px;}
 .set-row .check svg{width:15px;height:15px;}
 
 .ex-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:14px 12px;margin-bottom:12px;box-shadow:var(--shadow);}
-.ex-card-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;padding:0 4px;}
+.ex-card-head{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:10px;padding:0 4px;gap:8px;}
 .ex-card-head h3{font-size:14.5px;font-weight:700;}
 .ex-card-head .best{font-size:11.5px;color:var(--accent);font-weight:600;}
 
@@ -397,9 +397,21 @@ main#views{padding:16px 16px 24px;}
    (viewport-fit=cover + border-box) so there's no white band behind the notch —
    only the content shifts inward. */
 .sidenav{padding-left:env(safe-area-inset-left, 20px);}
+#lockscreen{position:fixed;inset:0;z-index:5000;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:24px;}
+#lockscreen .lock-box{width:100%;max-width:380px;}
+#lockscreen .lock-brand{display:flex;flex-direction:column;align-items:center;gap:10px;margin-bottom:28px;}
+#lockscreen .lock-brand .brand-mark{width:52px;height:52px;}
+#lockscreen .lock-brand h1{font-size:20px;margin:0;}
+#lockscreen .lock-brand p{font-size:12.5px;color:var(--text-dim);margin:0;}
+#lockscreen .profile-tile{display:flex;align-items:center;gap:12px;width:100%;padding:14px 16px;margin-bottom:10px;border-radius:16px;border:1px solid var(--border-soft);background:var(--bg-elev);cursor:pointer;text-align:left;}
+#lockscreen .profile-tile:active{transform:scale(0.98);}
+#lockscreen .profile-avatar{width:42px;height:42px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:16px;flex:0 0 auto;}
+#lockscreen .profile-tile .pname{font-weight:700;font-size:15px;}
+#lockscreen .profile-tile .pmeta{font-size:11.5px;color:var(--text-dim);}
 </style>
 </head>
 <body>
+<div id="lockscreen" style="display:none;"></div>
 <div id="layout">
 <nav class="sidenav" id="sidenav">
   <div class="side-brand"><div class="brand-mark"><svg viewBox="0 0 20 20" fill="none"><path d="M3 12 L7 12 L7 8 L11 8 L11 14 L15 14 L15 6 L17 6" stroke="#FFFFFF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></div><b>MuscoPlan</b></div>
@@ -537,6 +549,24 @@ function muscleArr(ex){
   if(pm) return [pm];
   return [];
 }
+/* Classification Polyarticulaire / Isolation : auto (>1 muscle principal => polyarticulaire)
+   sauf si ex.polyarticular a été fixé explicitement (case à cocher dans la fiche exercice),
+   ce qui permet de corriger les cas comme "Curl marteau" (biceps + avant-bras mais isolation). */
+function isPolyarticular(ex){
+  if(!ex) return false;
+  if(ex.polyarticular===true) return true;
+  if(ex.polyarticular===false) return false;
+  return muscleArr(ex).length>1;
+}
+/* Parse une fourchette de reps textuelle ("8-10", "12", "AMRAP 5+") en {min,max}. */
+function parseRepRange(str){
+  const s=String(str||'');
+  const range=s.match(/(\d+)\s*-\s*(\d+)/);
+  if(range) return {min:+range[1],max:+range[2]};
+  const single=s.match(/\d+/);
+  if(single) return {min:+single[0],max:+single[0]};
+  return null;
+}
 function multiMusclePickerHTML(id, selectedArr){
   const sel=selectedArr||[];
   return `<input type="hidden" id="${id}" value="${sel.join(',')}">
@@ -553,13 +583,17 @@ function bindMultiMusclePicker(id, m){
    TRI & AFFICHAGE UNIFIÉS DES EXERCICES
    Toutes les listes d'exercices de l'appli (routine, séance, bibliothèque,
    stats) passent par ces helpers pour un ordre et un libellé cohérents. */
-const EXERCISE_CATEGORY_ORDER = ['Push','Pull','Legs','Abdos / Core','Endurance / Sports'];
+/* La liste des catégories (Push/Pull/Legs/...) vit désormais dans GLOBAL.categories
+   (partagée entre profils, comme le catalogue d'exercices) : modifiable depuis
+   Réglages (ajout / renommage avec cascade sur les exercices / suppression).
+   DEFAULT_CATEGORIES sert uniquement de valeur initiale pour un nouvel appareil. */
+const DEFAULT_CATEGORIES = ['Push','Pull','Legs','Abdos / Core','Épaules & Santé / Préhab','Endurance / Sports'];
 const CAT_ABS_MUSCLES = ['Abdominaux','Obliques','Lombaires'];
 const CAT_PUSH_MUSCLES = ['Pectoraux','Épaules','Triceps'];
 const CAT_PULL_MUSCLES = ['Dos / Grand dorsal','Biceps','Avant-bras'];
 const CAT_LEG_MUSCLES = ['Quadriceps','Ischios-jambiers','Fessiers','Mollets'];
 function exerciseCategoryOptionsHTML(selected){
-  return EXERCISE_CATEGORY_ORDER.map(c=>`<option value="${c}" ${c===selected?'selected':''}>${c}</option>`).join('');
+  return (DB.categories||DEFAULT_CATEGORIES).map(c=>`<option value="${c}" ${c===selected?'selected':''}>${c}</option>`).join('');
 }
 /* Catégorie Push/Pull/Legs/Abdos-Core/Endurance d'un exercice : lue directement sur ex.category
    (choisie à la création — plus simple et plus fiable qu'un patron de mouvement à déduire).
@@ -570,7 +604,7 @@ function exerciseCategory(ex){
     const parent=getExercise(ex.variantOf);
     if(parent) return exerciseCategory(parent);
   }
-  if(EXERCISE_CATEGORY_ORDER.includes(ex.category)) return ex.category;
+  if((DB.categories||DEFAULT_CATEGORIES).includes(ex.category)) return ex.category;
   if(ex.pattern==='Poussée') return 'Push';
   if(ex.pattern==='Tirage') return 'Pull';
   if(ex.pattern==='Charnière de hanche' || ex.pattern==='Flexion de genou') return 'Legs';
@@ -601,8 +635,8 @@ function exerciseDisplayName(ex){
 /* Trie une liste d'exercices : Push -> Pull -> Legs -> Abdos/Core -> Endurance, puis alphabétique. */
 function sortExercisesByCategory(list){
   return [...list].sort((a,b)=>{
-    const ca=EXERCISE_CATEGORY_ORDER.indexOf(exerciseCategory(a));
-    const cb=EXERCISE_CATEGORY_ORDER.indexOf(exerciseCategory(b));
+    const ca=(DB.categories||DEFAULT_CATEGORIES).indexOf(exerciseCategory(a));
+    const cb=(DB.categories||DEFAULT_CATEGORIES).indexOf(exerciseCategory(b));
     if(ca!==cb) return ca-cb;
     return exerciseDisplayName(a).localeCompare(exerciseDisplayName(b),'fr');
   });
@@ -643,9 +677,30 @@ function exerciseOptionsHTML(list, selectedId){
   if(curCat!==null) html+='</optgroup>';
   return html;
 }
-function defaultDB(){
+/* ============================================================
+   STOCKAGE — architecture multi-profil à étanchéité stricte
+   ------------------------------------------------------------
+   Deux couches de stockage bien séparées :
+   1) GLOBAL (clé unique, partagée) : catalogue d'exercices/sports,
+      liste des muscles, et la LISTE des profils (id + nom uniquement).
+      Rien de personnel n'y vit — un profil ne peut donc jamais lire
+      les données d'un autre via cette clé.
+   2) PROFIL (une clé localStorage dédiée par profil) : routines,
+      séances, blocs, objectifs, historique de perfs/PR, blessures,
+      journal nutrition/poids, préférences. Totalement isolée : le
+      profil actif charge UNIQUEMENT sa propre clé.
+   `DB` reste, en mémoire, la fusion GLOBAL + PROFIL actif — tout le
+   reste du code (DB.routines, DB.sessions, etc.) continue de
+   fonctionner sans changement, mais DB ne contient jamais, à aucun
+   moment, les données de deux profils à la fois.
+   ============================================================ */
+const GLOBAL_KEY = 'muscoplan_global_v1';
+const LEGACY_DB_KEY = 'muscoplan_db_v1';
+function profileStorageKey(profileId){ return 'muscoplan_profile_'+profileId+'_v1'; }
+
+function defaultGlobal(){
   return {
-    version:1,
+    version:2,
     sports:[
       {id:'sp_muscu',name:'Musculation',type:'strength',color:'#18181B',bodyweightBased:false},
       {id:'sp_cali',name:'Calisthenics',type:'strength',color:'#52525B',bodyweightBased:true},
@@ -662,32 +717,151 @@ function defaultDB(){
       {id:'ex7',sportId:'sp_cali',name:'Tractions',category:'Pull',primaryMuscle:'Dos',variantOf:null},
       {id:'ex8',sportId:'sp_cali',name:'Pistol squat',category:'Legs',primaryMuscle:'Quadriceps',variantOf:null},
     ],
-    blocks:[],
-    routines:[],
-    sessions:[],
-    bodylog:[],
-    nutrilog:[],
-    injuries:[],
     muscles:[...DEFAULT_MUSCLE_LIST],
-    settings:{
-      units:'kg',
-      goalProtein:150,goalCarbs:250,goalFat:70,goalWater:2.5,
-      restDefault:90,
-      onboarded:true
-    }
+    categories:[...DEFAULT_CATEGORIES],
+    profiles:[]
   };
 }
-const DB_KEY = 'muscoplan_db_v1';
-let DB = loadDB();
-function loadDB(){
-  try{
-    const raw=localStorage.getItem(DB_KEY);
-    if(!raw) return defaultDB();
-    const parsed=JSON.parse(raw);
-    return Object.assign(defaultDB(),parsed);
-  }catch(e){console.error(e);return defaultDB();}
+function defaultProfileData(){
+  return {
+    blocks:[], routines:[], sessions:[], bodylog:[], nutrilog:[], injuries:[], goals:[],
+    settings:{ units:'kg', goalProtein:150,goalCarbs:250,goalFat:70,goalWater:2.5, restDefault:90, onboarded:true }
+  };
 }
-function saveDB(){ localStorage.setItem(DB_KEY, JSON.stringify(DB)); }
+let GLOBAL = null;
+let CURRENT_PROFILE_ID = null;
+function loadGlobal(){
+  try{
+    const raw=localStorage.getItem(GLOBAL_KEY);
+    if(!raw) return defaultGlobal();
+    return Object.assign(defaultGlobal(), JSON.parse(raw));
+  }catch(e){console.error(e);return defaultGlobal();}
+}
+function saveGlobal(){ localStorage.setItem(GLOBAL_KEY, JSON.stringify(GLOBAL)); }
+function loadProfileData(profileId){
+  try{
+    const raw=localStorage.getItem(profileStorageKey(profileId));
+    if(!raw) return defaultProfileData();
+    const parsed=JSON.parse(raw);
+    const merged=Object.assign(defaultProfileData(),parsed);
+    merged.settings=Object.assign(defaultProfileData().settings, parsed.settings||{});
+    return merged;
+  }catch(e){console.error(e);return defaultProfileData();}
+}
+/* Migration ponctuelle depuis l'ancienne version mono-fichier (une seule clé
+   partagée entre tous les profils). Séances/blocs sont répartis vers leur
+   profil d'origine (via l'ancien tag profileId) ; le reste (routines,
+   objectifs, blessures, journal...) part vers le premier profil, faute de
+   pouvoir déterminer un propriétaire dans l'ancien format. Ne s'exécute
+   qu'une fois : l'ancienne clé est supprimée une fois la migration faite. */
+function migrateLegacyIfNeeded(){
+  if(localStorage.getItem(GLOBAL_KEY)) return; // déjà migré / déjà sur la nouvelle archi
+  const raw=localStorage.getItem(LEGACY_DB_KEY);
+  if(!raw) return;
+  try{
+    const old=JSON.parse(raw);
+    const profiles=(old.profiles&&old.profiles.length)?old.profiles:[{id:'pr_default',name:'Moi'}];
+    const g=defaultGlobal();
+    g.sports=old.sports||g.sports;
+    g.exercises=old.exercises||g.exercises;
+    g.muscles=old.muscles||g.muscles;
+    g.categories=old.categories||g.categories;
+    g.profiles=profiles.map(p=>({id:p.id,name:p.name}));
+    localStorage.setItem(GLOBAL_KEY, JSON.stringify(g));
+    const defaultProfileId=profiles[0].id;
+    profiles.forEach(p=>{
+      const pd=defaultProfileData();
+      pd.blocks=(old.blocks||[]).filter(b=>(b.profileId||defaultProfileId)===p.id);
+      pd.sessions=(old.sessions||[]).filter(s=>(s.profileId||defaultProfileId)===p.id);
+      if(p.id===defaultProfileId){
+        pd.routines=old.routines||[];
+        pd.bodylog=old.bodylog||[];
+        pd.nutrilog=old.nutrilog||[];
+        pd.injuries=old.injuries||[];
+        pd.goals=old.goals||[];
+        if(old.settings) pd.settings=Object.assign(pd.settings, {
+          units:old.settings.units, goalProtein:old.settings.goalProtein, goalCarbs:old.settings.goalCarbs,
+          goalFat:old.settings.goalFat, goalWater:old.settings.goalWater, restDefault:old.settings.restDefault, onboarded:true
+        });
+      }
+      localStorage.setItem(profileStorageKey(p.id), JSON.stringify(pd));
+    });
+    localStorage.removeItem(LEGACY_DB_KEY);
+  }catch(e){ console.error('Migration MuscoPlan échouée', e); }
+}
+let DB = null;
+/* Fusionne GLOBAL + les données du profil actif dans DB (objet unique
+   utilisé par tout le reste de l'application, inchangé). */
+function enterProfile(profileId){
+  const p=(GLOBAL.profiles||[]).find(x=>x.id===profileId);
+  if(!p) return;
+  CURRENT_PROFILE_ID=profileId;
+  const pd=loadProfileData(profileId);
+  DB={ sports:GLOBAL.sports, exercises:GLOBAL.exercises, muscles:GLOBAL.muscles, categories:GLOBAL.categories, profiles:GLOBAL.profiles,
+       blocks:pd.blocks, routines:pd.routines, sessions:pd.sessions, bodylog:pd.bodylog, nutrilog:pd.nutrilog,
+       injuries:pd.injuries, goals:pd.goals, settings:pd.settings };
+  DB.settings.activeProfileId=profileId;
+  hideLockscreen();
+  navigate('dashboard');
+}
+/* Persiste DB dans les deux couches (global partagé + silo du profil actif).
+   Ne fait rien si aucun profil n'est actif (ex: sur l'écran de sélection). */
+function saveDB(){
+  if(!CURRENT_PROFILE_ID || !DB) return;
+  GLOBAL.sports=DB.sports; GLOBAL.exercises=DB.exercises; GLOBAL.muscles=DB.muscles; GLOBAL.categories=DB.categories; GLOBAL.profiles=DB.profiles;
+  saveGlobal();
+  const pd={ blocks:DB.blocks, routines:DB.routines, sessions:DB.sessions, bodylog:DB.bodylog, nutrilog:DB.nutrilog,
+             injuries:DB.injuries, goals:DB.goals, settings:DB.settings };
+  localStorage.setItem(profileStorageKey(CURRENT_PROFILE_ID), JSON.stringify(pd));
+}
+function logout(){
+  saveDB();
+  CURRENT_PROFILE_ID=null; DB=null;
+  showLockscreen();
+}
+function initial2(name){ return (name||'?').trim().slice(0,2).toUpperCase(); }
+function renderLockscreen(){
+  const profiles=GLOBAL.profiles||[];
+  return `<div class="lock-box">
+    <div class="lock-brand">
+      <div class="brand-mark" style="background:var(--ink);border-radius:14px;display:flex;align-items:center;justify-content:center;"><svg viewBox="0 0 20 20" fill="none" width="26" height="26"><path d="M3 12 L7 12 L7 8 L11 8 L11 14 L15 14 L15 6 L17 6" stroke="#FFFFFF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+      <h1>MuscoPlan</h1>
+      <p>Choisis ton profil pour continuer</p>
+    </div>
+    ${profiles.map(p=>`<button type="button" class="profile-tile" data-enter-profile="${p.id}">
+      <div class="profile-avatar">${initial2(p.name)}</div>
+      <div><div class="pname">${p.name}</div><div class="pmeta">Ouvrir mon espace</div></div>
+    </button>`).join('')}
+    ${!profiles.length?`<div style="font-size:12.5px;color:var(--text-dim);margin-bottom:14px;">Aucun profil pour l'instant — crée le premier ci-dessous.</div>`:''}
+    <div class="card" style="margin-top:14px;">
+      <div class="row"><input id="lock-new-name" placeholder="Prénom (ex: Anthony)" style="flex:1;"><button type="button" class="btn btn-primary btn-sm" id="lock-new-btn" style="flex:0 0 auto;">Créer</button></div>
+    </div>
+  </div>`;
+}
+function bindLockscreenEvents(){
+  const root=$('#lockscreen');
+  $$('[data-enter-profile]',root).forEach(b=>b.addEventListener('click',()=>enterProfile(b.dataset.enterProfile)));
+  const createFn=()=>{
+    const inp=$('#lock-new-name',root); const name=(inp.value||'').trim();
+    if(!name){ inp.focus(); return; }
+    const p={id:uid(),name};
+    GLOBAL.profiles=GLOBAL.profiles||[]; GLOBAL.profiles.push(p); saveGlobal();
+    enterProfile(p.id);
+  };
+  $('#lock-new-btn',root).addEventListener('click',createFn);
+  $('#lock-new-name',root).addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); createFn(); } });
+}
+function showLockscreen(){
+  $('#layout').style.display='none';
+  const ls=$('#lockscreen');
+  ls.style.display='flex';
+  ls.innerHTML=renderLockscreen();
+  bindLockscreenEvents();
+}
+function hideLockscreen(){
+  $('#lockscreen').style.display='none';
+  $('#layout').style.display='';
+}
 function getSport(id){return DB.sports.find(s=>s.id===id);}
 function getExercise(id){return DB.exercises.find(e=>e.id===id);}
 function getBlock(id){return DB.blocks.find(b=>b.id===id);}
@@ -703,6 +877,28 @@ function trackingExId(exId){
 function activeInjuryZones(){
   return DB.injuries.filter(i=>i.active).map(i=>i.zone);
 }
+/* ---------- Profils (multi-utilisateurs sur un même appareil) ---------- */
+function getProfile(id){ return (DB.profiles||[]).find(p=>p.id===id); }
+function profileName(id){ const p=getProfile(id); return p?p.name:'—'; }
+/* Résout le profil "propriétaire" d'une séance : priorité au profil explicite de la
+   séance, sinon celui du bloc auquel elle appartient, sinon le profil actif global.
+   Garantit qu'une séance ancienne (créée avant cette fonctionnalité) retombe toujours
+   sur un profil valide plutôt que de planter ou de tout mélanger. */
+function sessionProfileId(s){
+  if(!s) return null;
+  if(s.profileId) return s.profileId;
+  if(s.blockId){ const b=getBlock(s.blockId); if(b && b.profileId) return b.profileId; }
+  return DB.settings.activeProfileId || ((DB.profiles||[])[0] && DB.profiles[0].id) || null;
+}
+/* Ancien sélecteur multi-profil (un profil = un tag sur un bloc/séance dans une
+   base partagée) — devenu inutile depuis l'étanchéité stricte par silo de
+   stockage : chaque profil ne voit de toute façon plus jamais qu'un seul
+   profil à la fois (le sien). Ces fonctions sont conservées comme no-ops
+   pour ne pas casser leurs points d'appel existants, et retournent
+   simplement le profil actif courant. */
+function profileFieldHTML(id, selectedId){ return `<input type="hidden" id="${id}" value="${CURRENT_PROFILE_ID}">`; }
+function bindProfileField(id, m){ /* no-op : plus de sélecteur à câbler */ }
+function resolveProfileField(id, m){ return CURRENT_PROFILE_ID; }
 function exerciseZoneWarning(exId){
   const ex=getExercise(exId); if(!ex || !ex.zone) return null;
   const zones=activeInjuryZones();
@@ -731,8 +927,10 @@ function resetToRootView(){
   STATS_TAB='progression';
   BILAN_BLOCK_ID=null;
   STATS_SELECTED_EX=null;
+  STATS_SELECTED_FORMAT=null;
 }
 function navigate(view,opts){
+  if(!CURRENT_PROFILE_ID || !DB){ showLockscreen(); return; }
   closeAllModals();
   resetToRootView();
   if(opts){
@@ -898,33 +1096,196 @@ function computeAllPRs(){
   });
   return prs;
 }
-/* Historique des performances passées pour un exercice (toutes variantes confondues), triées récent -> ancien */
-function exerciseHistory(exId,beforeDate){
-  const rootId=trackingExId(exId);
+/* Historique des performances passées pour un exercice — STRICTEMENT le même exercice/variante
+   (exId exact, pas la racine). "Dernière fois" ne doit jamais mélanger Développé couché - Halte
+   avec Développé couché - Barre : ce sont deux exécutions différentes. Pour les records globalisés
+   par exercice racine, voir computeAllPRs() / trackingExId(). */
+/* Historique STRICTEMENT filtré par profil : l'historique d'Anthony sur un exercice ne doit
+   jamais alimenter les suggestions ou la ligne "Dernière fois" du bloc de Lisa, même si les deux
+   utilisent le même exercice. profileId est résolu par l'appelant via sessionProfileId(). */
+function exerciseHistory(exId,beforeDate,profileId){
   const out=[];
-  [...DB.sessions].filter(s=>s.status==='done' && (!beforeDate || s.date<beforeDate)).sort((a,b)=>b.date.localeCompare(a.date)).forEach(s=>{
+  [...DB.sessions].filter(s=>s.status==='done' && (!beforeDate || s.date<beforeDate) && (profileId==null || sessionProfileId(s)===profileId)).sort((a,b)=>b.date.localeCompare(a.date)).forEach(s=>{
     (s.entries||[]).forEach(ex=>{
-      if(trackingExId(ex.exId)===rootId){ out.push({date:s.date,sets:ex.sets.filter(st=>st.done && (st.weight||st.reps))}); }
+      if(ex.exId===exId){ out.push({date:s.date,targetReps:ex.targetReps||'',sets:ex.sets.filter(st=>st.done && (st.weight||st.reps))}); }
     });
   });
   return out;
 }
-/* Suggestion d'auto-progression basée sur le RPE moyen de la dernière séance */
-function progressionSuggestion(exId){
-  const hist=exerciseHistory(exId);
+/* ============================================================
+   MOTEUR DE SUGGESTION INTELLIGENTE (Charge x RPE x Volume)
+   Calcule la suggestion pour le couple [Profil + Exercice/Variante], sur la base de la
+   DERNIÈRE séance validée pour CE profil, en ajouts/retraits fixes en kg (jamais de %).
+
+   Règle de sécurité (prioritaire) : une hausse de charge n'est proposée QUE SI le nombre
+   minimal de reps de l'objectif a été atteint sur TOUTES les séries de la séance précédente.
+   Sinon on maintient (ou on baisse si l'échec est sévère), quel qu'ait été le RPE.
+
+   Sinon, grille d'ajustement selon le RPE moyen de la dernière séance validée :
+     RPE ≤ 5            → forte hausse (+5kg poly / +1 à +2.5kg iso)
+     5 < RPE ≤ 7.5       → hausse modérée SI le haut de la fourchette est atteint partout
+                            (+2.5kg poly / +1kg iso), sinon on vise d'abord le haut des reps
+     8 ≤ RPE < 9.5        → zone cible idéale, on maintient et on vise le haut des reps
+     RPE ≥ 9.5             → effort maximal, on maintient (le volume est déjà validé ici)
+     Pas de RPE renseigné → on ne peut pas affiner, message dédié
+*/
+function progressionSuggestion(exId, profileId, currentTargetReps){
+  const hist=exerciseHistory(exId,null,profileId);
   if(!hist.length || !hist[0].sets.length) return null;
-  const lastSets=hist[0].sets;
-  const weights=lastSets.map(s=>Number(s.weight)||0).filter(w=>w>0);
+  const last=hist[0];
+  const weights=last.sets.map(s=>Number(s.weight)||0).filter(w=>w>0);
   if(!weights.length) return null;
   const topWeight=Math.max(...weights);
-  const rpes=lastSets.map(s=>Number(s.rpe)).filter(r=>r>0);
-  const avgRpe = rpes.length? rpes.reduce((a,b)=>a+b,0)/rpes.length : null;
+  const exDef=getExercise(exId);
+  const poly=isPolyarticular(exDef);
+  const repRange=parseRepRange(currentTargetReps||last.targetReps);
+  const rpes=last.sets.map(s=>Number(s.rpe)).filter(r=>r>0);
+  const avgRpe=rpes.length?rpes.reduce((a,b)=>a+b,0)/rpes.length:null;
+  const round5=n=>Math.round(n*2)/2;
+  const bigInc = poly ? 5 : (topWeight<=20?1:2.5);
+  const smallInc = poly ? 2.5 : 1;
+  const reduceInc = poly ? 5 : 2.5;
+
+  let volumeValidated=true, severeFail=false, highReached=false;
+  if(repRange){
+    const repsAchieved=last.sets.map(st=>Number(st.reps)||0);
+    volumeValidated = repsAchieved.every(r=>r>=repRange.min);
+    highReached = repsAchieved.every(r=>r>=repRange.max);
+    if(!volumeValidated){
+      const worst=Math.min(...repsAchieved);
+      severeFail = worst<=0 || worst<=(repRange.min-3);
+    }
+  }
+
   let suggested=topWeight, note='';
-  if(avgRpe===null){ note='Ajoute un RPE pour affiner la suggestion'; }
-  else if(avgRpe<=7){ suggested=Math.round((topWeight+2.5)*2)/2; note=`RPE moy. ${avgRpe.toFixed(1)} — marge dispo, +2.5kg`; }
-  else if(avgRpe>=9){ suggested=Math.round((topWeight-2.5)*2)/2; note=`RPE moy. ${avgRpe.toFixed(1)} — effort élevé, allège un peu`; }
-  else { note=`RPE moy. ${avgRpe.toFixed(1)} — charge stable`; }
-  return {suggested,note,lastDate:hist[0].date,lastWeight:topWeight};
+  if(repRange && !volumeValidated){
+    if(severeFail){
+      suggested=round5(topWeight-reduceInc);
+      note=`Volume non tenu (objectif ${repRange.min}+ reps) — baisse de -${reduceInc}kg`;
+    } else {
+      suggested=topWeight;
+      note=`Objectif de ${repRange.min}+ reps non atteint sur toutes les séries — maintien de la charge`;
+    }
+  } else if(avgRpe===null){
+    note='Ajoute un RPE pour affiner la suggestion';
+  } else if(avgRpe<=5){
+    suggested=round5(topWeight+bigInc);
+    note=`Effort très facile (RPE ${avgRpe.toFixed(1)}) — augmentation recommandée de +${bigInc}kg`;
+  } else if(avgRpe<=7.5){
+    if(repRange && highReached){
+      suggested=round5(topWeight+smallInc);
+      note=`Haut de la fourchette atteint (RPE ${avgRpe.toFixed(1)}) — augmentation de +${smallInc}kg`;
+    } else {
+      note='Marge dispo, vise le haut de la fourchette de reps avant d\'augmenter la charge';
+    }
+  } else if(avgRpe<9.5){
+    note=`Zone cible idéale (RPE ${avgRpe.toFixed(1)}) — maintiens la charge, vise le haut de la fourchette de reps`;
+  } else {
+    note=`Effort maximal (RPE ${avgRpe.toFixed(1)}) — maintien de la charge`;
+  }
+  return {suggested,note,lastDate:last.date,lastWeight:topWeight};
+}
+/* Volume total (poids x reps) d'une séance pour un exercice, et volume effectivement validé (sets done) */
+function entryVolume(entry,onlyDone){
+  return (entry.sets||[]).filter(st=>!onlyDone||st.done).reduce((sum,st)=>sum+(Number(st.weight)||0)*(Number(st.reps)||0),0);
+}
+/* Compare le volume validé de la dernière séance à celui de l'avant-dernière, pour un exercice/variante donné */
+function volumeProgress(exId,profileId){
+  const hist=exerciseHistory(exId,null,profileId);
+  if(hist.length<2) return null;
+  const volNow=hist[0].sets.reduce((sum,st)=>sum+(Number(st.weight)||0)*(Number(st.reps)||0),0);
+  const volPrev=hist[1].sets.reduce((sum,st)=>sum+(Number(st.weight)||0)*(Number(st.reps)||0),0);
+  if(volPrev<=0) return null;
+  const pct=((volNow-volPrev)/volPrev)*100;
+  return {volNow,volPrev,pct};
+}
+/* Tendance de charge moyenne max sur les 4 dernières semaines : % d'évolution, ou détection de plateau */
+function monthTrend(exId,profileId){
+  const hist=exerciseHistory(exId,null,profileId);
+  if(!hist.length) return null;
+  const cutoff=new Date(); cutoff.setDate(cutoff.getDate()-28);
+  const cutoffISO=cutoff.toISOString().slice(0,10);
+  const recent=hist.filter(h=>h.date>=cutoffISO);
+  const tops=recent.map(h=>{
+    const ws=h.sets.map(s=>Number(s.weight)||0).filter(w=>w>0);
+    return ws.length?Math.max(...ws):0;
+  }).filter(w=>w>0);
+  if(tops.length<2) return null;
+  const newest=tops[0], oldest=tops[tops.length-1];
+  if(oldest<=0) return null;
+  const pct=((newest-oldest)/oldest)*100;
+  if(Math.abs(pct)<1.5 && tops.length>=3) return {type:'plateau',pct,label:'Plateau détecté ce mois-ci : envisage un deload de 10%'};
+  const sign=pct>=0?'+':'';
+  return {type:'trend',pct,label:`${sign}${pct.toFixed(1)}% de charge moy. ce mois-ci`};
+}
+/* ---------- Objectifs d'exercices ---------- */
+function exerciseGoal(exId){
+  const rootId=trackingExId(exId);
+  return (DB.goals||[]).find(g=>g.exId===rootId && !g.achieved) || null;
+}
+/* Meilleur poids soulevé pour au moins le nombre de reps cible de l'objectif (toutes variantes de la racine) */
+function goalCurrentWeight(goal){
+  let best=0;
+  DB.sessions.filter(s=>s.status==='done').forEach(s=>{
+    (s.entries||[]).forEach(ex=>{
+      if(trackingExId(ex.exId)!==goal.exId) return;
+      (ex.sets||[]).forEach(st=>{
+        if(st.done && (Number(st.reps)||0)>=(Number(goal.targetReps)||1) && (Number(st.weight)||0)>best) best=Number(st.weight);
+      });
+    });
+  });
+  return best;
+}
+function goalProgressPct(goal){
+  const cur=goalCurrentWeight(goal);
+  if(!goal.targetWeight) return 0;
+  return Math.max(0,Math.min(100,Math.round((cur/goal.targetWeight)*100)));
+}
+function goalWeeksLeft(goal){
+  if(!goal.deadline) return null;
+  const days=Math.ceil((new Date(goal.deadline)-new Date(todayISO()))/86400000);
+  return Math.ceil(days/7);
+}
+function goalBarHTML(goal){
+  if(!goal) return '';
+  const pct=goalProgressPct(goal);
+  const cur=goalCurrentWeight(goal);
+  const weeksLeft=goalWeeksLeft(goal);
+  const weeksTxt = weeksLeft===null ? '' : (weeksLeft>=0? ` — il reste ${weeksLeft} semaine${weeksLeft>1?'s':''}` : ' — échéance dépassée');
+  return `<div style="margin-bottom:10px;">
+    <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-dim);margin-bottom:4px;">
+      <span>🎯 Objectif ${goal.targetWeight}kg × ${goal.targetReps}${cur?` (actuel ${cur}kg)`:''}</span>
+      <span class="mono">${pct}%${weeksTxt}</span>
+    </div>
+    <div style="height:7px;border-radius:99px;background:var(--surface-3);overflow:hidden;"><div style="height:100%;width:${pct}%;background:var(--accent);border-radius:99px;"></div></div>
+  </div>`;
+}
+function openGoalModal(rootExId){
+  const ex=getExercise(rootExId);
+  const existing=exerciseGoal(rootExId);
+  openModal('Objectif — '+(ex?ex.name:''),`
+    <div class="row"><div class="field"><label>Poids cible (kg)</label><input type="number" id="goal-weight" value="${existing?existing.targetWeight:''}" placeholder="100"></div>
+    <div class="field"><label>Reps cibles</label><input type="number" id="goal-reps" value="${existing?existing.targetReps:''}" placeholder="5"></div></div>
+    <div class="field"><label>Échéance</label><input type="date" id="goal-deadline" value="${existing?existing.deadline||'':''}"></div>
+    <button class="btn btn-primary" id="goal-save">Enregistrer l'objectif</button>
+    ${existing?'<button class="btn btn-danger" id="goal-remove" style="margin-top:8px;">Supprimer l\'objectif</button>':''}
+  `,{onMount:(m)=>{
+    $('#goal-save',m).addEventListener('click',()=>{
+      const targetWeight=Number($('#goal-weight',m).value)||0;
+      const targetReps=Number($('#goal-reps',m).value)||1;
+      const deadline=$('#goal-deadline',m).value||'';
+      if(!targetWeight){toast('Poids cible requis');return;}
+      if(!DB.goals) DB.goals=[];
+      if(existing){ existing.targetWeight=targetWeight; existing.targetReps=targetReps; existing.deadline=deadline; }
+      else DB.goals.push({id:uid(),exId:rootExId,targetWeight,targetReps,deadline,achieved:false,createdDate:todayISO()});
+      saveDB(); closeModal(); toast('Objectif enregistré'); render();
+    });
+    const rmBtn=$('#goal-remove',m);
+    if(rmBtn) rmBtn.addEventListener('click',()=>{
+      DB.goals=(DB.goals||[]).filter(g=>g.id!==existing.id);
+      saveDB(); closeModal(); toast('Objectif supprimé'); render();
+    });
+  }});
 }
 
 /* ============================================================
@@ -1071,12 +1432,13 @@ function openDayModal(iso, forcedBlockId){
   const otherSportsToday=[...new Set(sessions.map(s=>s.sportId))].map(id=>getSport(id)).filter(Boolean);
   const routineOptions = DB.routines.map(r=>`<option value="${r.id}">${r.name} — ${getSport(r.sportId)?.name||''}</option>`).join('');
   const pastSessions=[...DB.sessions].filter(s=>s.date!==iso && (s.entries?.length || s.cardio)).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,25);
+  const forcedBlock=forcedBlockId?getBlock(forcedBlockId):null;
   openModal(fmtDate(iso,{long:true}),`
     ${otherSportsToday.length?`<div class="chip" style="border-color:var(--warn);color:var(--warn);margin-bottom:12px;">⚠️ Déjà prévu ce jour : ${otherSportsToday.map(sp=>sp.name).join(', ')}</div>`:''}
     <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px;">
       ${sessions.length? sessions.map(s=>`<div class="list-item">
         <div class="swatch" style="background:${getSport(s.sportId)?.color||'#888'}"></div>
-        <div class="main"><div class="title">${s.routineId?getRoutine(s.routineId)?.name:getSport(s.sportId)?.name}</div><div class="meta">${SPORT_TYPES[getSport(s.sportId)?.type]?.label||''}</div></div>
+        <div class="main"><div class="title">${s.routineId?getRoutine(s.routineId)?.name:getSport(s.sportId)?.name}</div><div class="meta">${SPORT_TYPES[getSport(s.sportId)?.type]?.label||''} · 👤 ${profileName(sessionProfileId(s))}</div></div>
         <button class="icon-btn" data-goto="${s.id}" style="width:32px;height:32px;"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg></button>
         <button class="icon-btn" data-del-day-session="${s.id}" style="width:32px;height:32px;color:var(--danger);"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m2 0v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V6"/></svg></button>
       </div>`).join('') : `<div class="d" style="color:var(--text-dim);font-size:13px;">Aucune séance ce jour.</div>`}
@@ -1085,6 +1447,7 @@ function openDayModal(iso, forcedBlockId){
     <div class="field"><label>Routine</label><select id="day-routine-select"><option value="">— Séance libre (choisir un sport) —</option>${routineOptions}</select></div>
     <div id="day-routine-preview">${routineDetailHTML('')}</div>
     <div class="field" id="day-sport-field"><label>Sport</label><select id="day-sport-select">${DB.sports.map(s=>`<option value="${s.id}">${s.name}</option>`).join('')}</select></div>
+    <div id="day-profile-field" style="display:none;">${profileFieldHTML('day-profile-select', CURRENT_PROFILE_ID)}</div>
     <button class="btn btn-primary" id="day-add-session" style="margin-bottom:18px;">Ajouter au ${fmtDate(iso,{short:true})}</button>
     <div class="section-title">Ou copier une séance existante</div>
     <div class="field" style="margin-bottom:10px;"><select id="day-copy-select"><option value="">— Choisir une séance passée —</option>${pastSessions.map(s=>`<option value="${s.id}">${fmtDate(s.date,{short:true})} — ${s.routineId?getRoutine(s.routineId)?.name:getSport(s.sportId)?.name}</option>`).join('')}</select></div>
@@ -1094,19 +1457,29 @@ function openDayModal(iso, forcedBlockId){
     function refreshRoutinePreview(){
       $('#day-routine-preview',m).innerHTML=routineDetailHTML(routineSel.value);
       sportField.style.display=routineSel.value?'none':'block';
+      const rId=routineSel.value;
+      const linkedBlockId = forcedBlockId || (rId? getRoutine(rId)?.blockId : null);
+      const linkedBlock = linkedBlockId? getBlock(linkedBlockId): null;
     }
     routineSel.addEventListener('change',refreshRoutinePreview); refreshRoutinePreview();
     $('#day-add-session',m).addEventListener('click',()=>{
       const routineId=$('#day-routine-select',m).value||null;
       const sportId = routineId? getRoutine(routineId).sportId : $('#day-sport-select',m).value;
-      const sess={id:uid(),date:iso,sportId,routineId,blockId:forcedBlockId||(routineId?getRoutine(routineId).blockId:null),status:'planned',entries:routineId?buildEntriesFromRoutine(routineId, iso):[],cardio:null,notes:''};
+      const linkedBlockId = forcedBlockId||(routineId?getRoutine(routineId).blockId:null);
+      const linkedBlock = linkedBlockId? getBlock(linkedBlockId): null;
+      let profileId;
+      if(linkedBlock && linkedBlock.profileId){ profileId=linkedBlock.profileId; }
+      else { profileId=resolveProfileField('day-profile-select',m); if(!profileId){toast('Choisis ou crée un profil');return;} }
+      const sess={id:uid(),date:iso,sportId,routineId,blockId:linkedBlockId,status:'planned',entries:routineId?buildEntriesFromRoutine(routineId, iso, profileId):[],cardio:null,notes:'',profileId};
       DB.sessions.push(sess); saveDB(); closeModal(); toast('Séance planifiée'); render();
     });
     $('#day-copy-confirm',m).addEventListener('click',()=>{
       const srcId=$('#day-copy-select',m).value; if(!srcId){toast('Choisis une séance à copier');return;}
       const src=getSession(srcId);
       const copy=JSON.parse(JSON.stringify(src));
-      copy.id=uid(); copy.date=iso; copy.status='planned'; if(forcedBlockId) copy.blockId=forcedBlockId;
+      copy.id=uid(); copy.date=iso; copy.status='planned';
+      copy.profileId = forcedBlock&&forcedBlock.profileId ? forcedBlock.profileId : sessionProfileId(src);
+      if(forcedBlockId) copy.blockId=forcedBlockId;
       (copy.entries||[]).forEach(ex=>ex.sets.forEach(st=>{st.done=false;}));
       DB.sessions.push(copy); saveDB(); closeModal(); toast('Séance copiée'); render();
     });
@@ -1141,13 +1514,13 @@ function routineDetailHTML(routineId){
     }).join('')}
   </div>`;
 }
-function buildEntriesFromRoutine(routineId, beforeDate){
+function buildEntriesFromRoutine(routineId, beforeDate, profileId){
   const r=getRoutine(routineId); if(!r) return [];
   const sport=getSport(r.sportId)||{type:'mixed'};
   if(sport.type==='strength' || sport.type==='mixed'){
     return (r.items||[]).map(it=>{
       const nSets=it.targetSets||3;
-      const hist=exerciseHistory(it.exerciseId, beforeDate)[0];
+      const hist=exerciseHistory(it.exerciseId, beforeDate, profileId)[0];
       const targetRepsNum=(String(it.targetReps||'').match(/\d+/)||[])[0]||'';
       return {
         exId:it.exerciseId,
@@ -1193,6 +1566,7 @@ function renderSession(){
     <div class="section-title">Entraînement libre</div>
     <div class="card">
       <div class="field"><label>Sport</label><select id="freeform-sport">${DB.sports.map(s=>`<option value="${s.id}">${s.name}</option>`).join('')}</select></div>
+      <div style="display:none;">${profileFieldHTML('freeform-profile', CURRENT_PROFILE_ID)}</div>
       <button class="btn btn-primary" id="freeform-start">Démarrer maintenant</button>
     </div>`;
   }
@@ -1238,6 +1612,8 @@ function openQuickExerciseModal(sportId, onCreated){
     <div class="field"><label>Variante de (optionnel)</label><select id="qex-variant-of">${variantOfOptionsHTML(sportId,'','')}</select></div>
     <div id="qex-cat-wrap" class="field"><label>Catégorie</label><select id="qex-cat">${exerciseCategoryOptionsHTML()}</select></div>
     <div class="field"><label>Muscles principaux</label>${multiMusclePickerHTML('qex-primary')}</div>
+    <label style="display:flex;align-items:center;gap:8px;margin:2px 0 4px;"><input type="checkbox" id="qex-poly" style="width:18px;height:18px;flex-shrink:0;"><span>Mouvement polyarticulaire</span></label>
+    <div style="font-size:11px;color:var(--text-faint);margin-bottom:10px;">Coché automatiquement si plusieurs muscles principaux sont sélectionnés — décoche/coche pour corriger.</div>
     <div id="qex-batch-variants-wrap" class="field">
       <label>Variantes (optionnel)</label>
       <div id="qex-variant-chips" class="tag-wrap" style="margin-bottom:8px;"></div>
@@ -1247,6 +1623,14 @@ function openQuickExerciseModal(sportId, onCreated){
   `,{onMount:(m)=>{
     $('#qex-name',m).focus();
     bindMultiMusclePicker('qex-primary',m);
+    const qexPolyChk=$('#qex-poly',m);
+    let qexPolyTouched=false;
+    qexPolyChk.addEventListener('change',()=>{ qexPolyTouched=true; });
+    $$('#qex-primary-chips .chip-toggle',m).forEach(btn=>btn.addEventListener('click',()=>{
+      if(qexPolyTouched) return;
+      const n=$$('#qex-primary-chips .chip-toggle.active',m).length;
+      qexPolyChk.checked = n>1;
+    }));
     let pending=[];
     function syncVariantMode(){
       const isNowVariant=!!$('#qex-variant-of',m).value;
@@ -1273,36 +1657,81 @@ function openQuickExerciseModal(sportId, onCreated){
       const parentEx=variantOfVal?getExercise(variantOfVal):null;
       const category=parentEx?parentEx.category:$('#qex-cat',m).value;
       const primaryMuscle=$('#qex-primary',m).value.split(',').filter(Boolean);
-      const newEx={id:uid(),name,sportId,category,primaryMuscle,variantOf:variantOfVal};
+      const autoPoly=primaryMuscle.length>1;
+      const polyChecked=$('#qex-poly',m).checked;
+      const polyarticular = polyChecked===autoPoly ? null : polyChecked;
+      const newEx={id:uid(),name,sportId,category,primaryMuscle,polyarticular,variantOf:variantOfVal};
       DB.exercises.push(newEx);
       pending.forEach(vn=>DB.exercises.push({id:uid(),name:vn,sportId,category,primaryMuscle,variantOf:newEx.id}));
       saveDB(); closeModal(); toast('Exercice créé'); onCreated(newEx);
     });
   }});
 }
-function exercisePickerHTML(s){
-  const roots=sortExercisesByCategory(DB.exercises.filter(e=>e.sportId===s.sportId && !e.variantOf));
+/* Génère le contenu à onglets (Push/Pull/Legs/Abdos/Endurance) + recherche instantanée pour choisir
+   un ou plusieurs exercices. checkboxClass = classe des checkboxes ; idPrefix évite les collisions
+   d'id quand ce composant est utilisé plusieurs fois (picker de séance vs modale "ajouter"). */
+function exercisePickerTabsHTML(roots, idPrefix, checkboxClass, opts={}){
+  const single = !!opts.single;
+  const hideVariants = !!opts.hideVariants;
   const prs=computeAllPRs();
-  let curCat=null;
-  return `<div class="card">
-    <div class="section-title" style="margin-top:0;">Choisir des exercices</div>
-    ${roots.map(e=>{
-      const cat=exerciseCategory(e);
-      const header = cat!==curCat ? (curCat=cat, `<div class="section-title" style="font-size:10.5px;margin:${roots[0]===e?'0':'16px'} 2px 6px;">${cat}</div>`) : '';
-      const variants=DB.exercises.filter(v=>v.variantOf===e.id);
+  const byCat={};
+  roots.forEach(e=>{ const c=exerciseCategory(e); (byCat[c]=byCat[c]||[]).push(e); });
+  const cats=(DB.categories||DEFAULT_CATEGORIES).filter(c=>byCat[c] && byCat[c].length);
+  if(!cats.length) return `<div style="font-size:12.5px;color:var(--text-dim);padding:8px 2px;">Aucun exercice pour ce sport.</div>`;
+  return `<input id="${idPrefix}-search" placeholder="Rechercher un exercice..." style="margin-bottom:10px;">
+  <div class="tabs-sub" id="${idPrefix}-tabs" style="flex-wrap:wrap;">${cats.map((c,i)=>`<button type="button" data-picker-tab="${c}" class="${i===0?'active':''}">${c}</button>`).join('')}</div>
+  <div id="${idPrefix}-panels">
+  ${cats.map((c,i)=>`<div class="picker-panel" data-picker-panel="${c}" style="display:${i===0?'block':'none'};margin-top:10px;">
+    ${byCat[c].map(e=>{
+      const variants=hideVariants?[]:DB.exercises.filter(v=>v.variantOf===e.id);
       const pr=prs[e.id];
-      return `${header}<div style="padding:8px 2px;border-bottom:1px solid var(--border-soft);">
+      return `<div class="picker-row" data-picker-row style="padding:8px 2px;border-bottom:1px solid var(--border-soft);">
       <label style="display:flex;align-items:center;gap:10px;">
-        <input type="checkbox" class="pick-ex" value="${e.id}" style="width:18px;height:18px;">
-        <span style="font-size:14px;flex:1;">${e.name}${pr?`<span style="color:var(--accent);font-size:11px;font-family:var(--font-mono);"> · PR ${pr.weight}kg×${pr.reps}</span>`:''}</span>
-        <span class="chip">${e.category||''}</span>
+        <input type="${single?'radio':'checkbox'}" ${single?`name="${idPrefix}-group"`:''} class="${checkboxClass}" value="${e.id}" style="width:18px;height:18px;">
+        <span style="font-size:14px;flex:1;" data-picker-label>${e.name}${pr?`<span style="color:var(--accent);font-size:11px;font-family:var(--font-mono);"> · PR ${pr.weight}kg×${pr.reps}</span>`:''}</span>
       </label>
-      ${variants.length?`<select class="pick-ex-variant" data-for="${e.id}" style="margin:8px 0 0 28px;width:calc(100% - 28px);font-size:12.5px;padding:8px 10px;display:none;">
+      ${variants.length?`<select class="${checkboxClass}-variant" data-for="${e.id}" style="margin:8px 0 0 28px;width:calc(100% - 28px);font-size:12.5px;padding:8px 10px;display:none;">
         <option value="${e.id}">${e.name} (Normal)</option>
         ${variants.map(v=>`<option value="${v.id}">${e.name} - ${v.name}</option>`).join('')}
       </select>`:''}
       </div>`;
     }).join('')}
+  </div>`).join('')}
+  </div>`;
+}
+/* Câble les onglets + la recherche instantanée d'un exercisePickerTabsHTML rendu dans le conteneur `root` */
+function bindExercisePickerTabs(root, idPrefix, checkboxClass){
+  $$(`[data-picker-tab]`,root).forEach(btn=>btn.addEventListener('click',()=>{
+    $$(`[data-picker-tab]`,root).forEach(b=>b.classList.toggle('active',b===btn));
+    $$(`[data-picker-panel]`,root).forEach(p=>p.style.display = p.dataset.pickerPanel===btn.dataset.pickerTab ? 'block':'none');
+  }));
+  $$(`.${checkboxClass}`,root).forEach(cb=>cb.addEventListener('change',()=>{
+    const variantSel=$(`.${checkboxClass}-variant[data-for="${cb.value}"]`,root);
+    if(variantSel) variantSel.style.display = cb.checked? 'block':'none';
+  }));
+  const search=$(`#${idPrefix}-search`,root);
+  if(search) search.addEventListener('input',()=>{
+    const q=search.value.trim().toLowerCase();
+    if(!q){
+      // recherche vide : on revient à l'onglet actif normal
+      $$(`[data-picker-panel]`,root).forEach(p=>p.style.display = p.dataset.pickerPanel===$(`[data-picker-tab].active`,root)?.dataset.pickerTab ? 'block':'none');
+      $$(`[data-picker-row]`,root).forEach(r=>r.style.display='');
+      return;
+    }
+    // en recherche : on montre tous les onglets, on masque les lignes qui ne matchent pas
+    $$(`[data-picker-panel]`,root).forEach(p=>p.style.display='block');
+    $$(`[data-picker-row]`,root).forEach(r=>{
+      const label=r.querySelector('[data-picker-label]');
+      const match=label && label.textContent.toLowerCase().includes(q);
+      r.style.display=match?'':'none';
+    });
+  });
+}
+function exercisePickerHTML(s){
+  const roots=sortExercisesByCategory(DB.exercises.filter(e=>e.sportId===s.sportId && !e.variantOf));
+  return `<div class="card">
+    <div class="section-title" style="margin-top:0;">Choisir des exercices</div>
+    ${exercisePickerTabsHTML(roots,'main-picker','pick-ex')}
     <button class="btn btn-ghost btn-sm" id="quick-create-exercise" style="margin-top:12px;">+ Créer un nouvel exercice</button>
     <button class="btn btn-primary" id="confirm-exercises" style="margin-top:10px;">Commencer</button>
   </div>`;
@@ -1312,10 +1741,17 @@ function strengthExCardHTML(s,ex,idx){
   const sport=getSport(exDef?.sportId);
   const isCali = sport && sport.bodyweightBased;
   const best = ex.sets.reduce((m,st)=>Math.max(m,est1RM(st.weight,st.reps)),0);
-  const storedPR = computeAllPRs()[trackingExId(ex.exId)];
+  const rootId = trackingExId(ex.exId);
+  const storedPR = computeAllPRs()[rootId];
   const zoneWarn = exerciseZoneWarning(ex.exId);
-  const sugg = progressionSuggestion(ex.exId);
-  const hist = exerciseHistory(ex.exId, null)[0];
+  const profileId = sessionProfileId(s);
+  const sugg = progressionSuggestion(ex.exId, profileId, ex.targetReps);
+  const hist = exerciseHistory(ex.exId, null, profileId)[0];
+  const volProg = volumeProgress(ex.exId, profileId);
+  const trend = monthTrend(ex.exId, profileId);
+  const goal = exerciseGoal(ex.exId);
+  const sameExBefore = s.entries.slice(0,idx).filter(en=>en.exId===ex.exId).length;
+  const occurrence = sameExBefore>0 ? sameExBefore+1 : (s.entries.filter(en=>en.exId===ex.exId).length>1 ? 1 : 0);
   const block = s.blockId? getBlock(s.blockId) : null;
   const chainOn = block && block.autoProgression && block.autoProgression.enabled && s.routineId;
   const rows = ex.sets.map((st,si)=>{
@@ -1333,26 +1769,87 @@ function strengthExCardHTML(s,ex,idx){
       <td><input type="number" inputmode="numeric" class="set-input" data-field="reps" value="${st.reps}" placeholder="${repsPlaceholder}">${prevSet&&prevSet.reps?`<div class="prev-hint">Prev ${prevSet.reps}</div>`:''}</td>
       <td><input type="number" inputmode="numeric" class="set-input" data-field="rpe" value="${st.rpe}" placeholder="–" min="1" max="10"></td>
       ${isCali?`<td><input type="number" inputmode="decimal" class="set-input" data-field="bw" value="${st.bw}" placeholder="lest"></td>`:''}
+      <td><button class="icon-btn" data-plate-calc="1" title="Calculateur de plaques" style="width:26px;height:26px;font-size:13px;">🏋️</button></td>
       <td><button class="check" data-toggle-done="1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg></button></td>
     </tr>`;}).join('');
+  const parentEx = exDef?.variantOf ? getExercise(exDef.variantOf) : null;
   return `<div class="ex-card" data-exercise="${idx}">
-    <div class="ex-card-head"><h3>${exDef?.name||'Exercice'}${exDef?.variantOf?`<span style="font-size:10.5px;color:var(--text-faint);font-weight:500;"> · variante de ${getExercise(exDef.variantOf)?.name||''}</span>`:''}</h3>
-      <span style="display:flex;align-items:center;gap:8px;">
+    <div class="ex-card-head"><div>
+      <h3>${parentEx?parentEx.name:(exDef?.name||'Exercice')}${occurrence?`<span style="font-size:10.5px;color:var(--accent);font-weight:700;"> · ${occurrence}ᵉ passage</span>`:''}</h3>
+      ${parentEx?`<div style="font-size:11.5px;color:var(--text-dim);font-weight:600;margin-top:1px;">${exDef.name}</div>`:''}
+      </div>
+      <span style="display:flex;align-items:center;gap:6px;">
         <span class="best mono">${best>0?'1RM est. ~'+Math.round(best)+'kg':storedPR?'PR: '+storedPR.weight+'kg×'+storedPR.reps:''}</span>
+        <button class="icon-btn" data-goal-ex="${rootId}" title="Objectif" style="width:30px;height:30px;">🎯</button>
+        <button class="icon-btn" data-replace-ex="${idx}" title="Remplacer cet exercice" style="width:30px;height:30px;">⇄</button>
         <button class="icon-btn" data-remove-ex="${idx}" title="Retirer cet exercice" style="width:30px;height:30px;color:var(--danger);"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m2 0v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V6"/></svg></button>
       </span>
     </div>
-    ${ex.targetReps?`<div style="font-size:11px;color:var(--text-faint);margin-bottom:6px;">Objectif : ${ex.targetSets||ex.sets.length}×${ex.targetReps}</div>`:''}
+    ${ex.targetReps?`<div style="font-size:11px;color:var(--text-faint);margin-bottom:6px;">Objectif de séance : ${ex.targetSets||ex.sets.length}×${ex.targetReps}</div>`:''}
+    ${goalBarHTML(goal)}
     ${zoneWarn?`<div class="chip" style="border-color:var(--danger);color:var(--danger);margin-bottom:8px;">⚠️ Zone sensible : ${zoneWarn}</div>`:''}
     ${chainOn?`<div class="chip" style="border-color:var(--accent);color:var(--accent);margin-bottom:8px;">🔄 Surcharge progressive active${(function(){const r=blockChainWeight(block,s.routineId,s.date,ex.exId,0);return r?` — réf. ${r.refWeight}kg (S+${r.weekIdx})`:' — en attente de la 1ère séance validée';})()}</div>`:''}
-    ${hist?`<div style="font-size:11px;color:var(--text-dim);margin-bottom:8px;">📅 Dernière fois le ${fmtDate(hist.date,{short:true})} : ${hist.sets.map(s2=>`${s2.weight||'?'}kg×${s2.reps||'?'}`).join(', ')||'—'}</div>`:''}
+    ${hist?`<div style="font-size:11px;color:var(--text-dim);margin-bottom:4px;">📅 Dernière fois (${exerciseDisplayName(exDef)}) le ${fmtDate(hist.date,{short:true})} : ${hist.sets.map(s2=>`${s2.weight||'?'}kg×${s2.reps||'?'}`).join(', ')||'—'}</div>`:`<div style="font-size:11px;color:var(--text-faint);margin-bottom:4px;">📅 Aucun historique pour ce profil</div>`}
+    ${volProg?`<div style="font-size:11px;color:var(--text-dim);margin-bottom:4px;">📊 Volume : ${Math.round(volProg.volNow)}kg <span style="color:${volProg.pct>=0?'var(--accent)':'var(--text-faint)'};">(${volProg.pct>=0?'+':''}${volProg.pct.toFixed(0)}% vs séance précédente)</span></div>`:''}
+    ${trend?`<div style="font-size:11px;color:${trend.type==='plateau'?'var(--warn)':'var(--text-dim)'};margin-bottom:8px;">${trend.type==='plateau'?'⚠️ ':'📈 '}${trend.label}</div>`:''}
     ${sugg?`<div class="chip" style="border-color:var(--accent);color:var(--accent);margin-bottom:10px;">💡 Suggestion : ${sugg.suggested}kg <span style="color:var(--text-dim);font-weight:500;">— ${sugg.note}</span> <button data-apply-suggestion="${idx}" data-sugg-weight="${sugg.suggested}" style="background:none;border:none;color:var(--accent);font-weight:700;margin-left:4px;text-decoration:underline;">appliquer</button></div>`:''}
-    <table class="set-table"><thead><tr><th>Série</th><th>Kg</th><th>Reps</th><th>RPE</th>${isCali?'<th>Lest</th>':''}<th>✓</th></tr></thead>
+    <table class="set-table"><thead><tr><th>Série</th><th>Kg</th><th>Reps</th><th>RPE</th>${isCali?'<th>Lest</th>':''}<th></th><th>✓</th></tr></thead>
     <tbody>${rows}</tbody></table>
     <div style="display:flex;gap:8px;margin-top:10px;">
       <button class="btn btn-secondary btn-sm" data-add-set="${idx}">+ Série</button>
     </div>
   </div>`;
+}
+/* Remplacement rapide : change l'exercice d'une entrée en cours de séance (ex: machine prise)
+   sans toucher à l'historique déjà enregistré — seule cette entrée de LA séance en cours pointe
+   désormais vers le nouvel exercice ; les séances passées restent inchangées. */
+function openReplaceExerciseModal(s,idx){
+  const current=getExercise(s.entries[idx].exId);
+  const candidates=sortExercisesByCategory(DB.exercises.filter(e=>e.sportId===s.sportId && e.id!==current.id));
+  openModal('Remplacer — '+(current?current.name:''),`
+    <input id="replace-search" placeholder="Rechercher un exercice..." style="margin-bottom:10px;">
+    <div id="replace-list" style="display:flex;flex-direction:column;gap:4px;max-height:50vh;overflow:auto;"></div>
+  `,{onMount:(m)=>{
+    const listEl=$('#replace-list',m);
+    function draw(q){
+      const qq=(q||'').toLowerCase();
+      const filtered=candidates.filter(e=>exerciseDisplayName(e).toLowerCase().includes(qq));
+      listEl.innerHTML=filtered.map(e=>`<button class="btn btn-secondary" data-pick-replacement="${e.id}" style="justify-content:flex-start;">${exerciseDisplayName(e)}</button>`).join('') || `<div style="font-size:12.5px;color:var(--text-dim);">Aucun résultat</div>`;
+      $$('[data-pick-replacement]',listEl).forEach(btn=>btn.addEventListener('click',()=>{
+        s.entries[idx].exId=btn.dataset.pickReplacement;
+        saveDB(); closeModal(); toast('Exercice remplacé'); render();
+      }));
+    }
+    draw('');
+    $('#replace-search',m).addEventListener('input',e=>draw(e.target.value));
+    $('#replace-search',m).focus();
+  }});
+}
+/* Calculateur de plaques : décompose le poids total en plaques par côté sur une barre olympique de 20kg */
+const PLATE_SIZES=[25,20,15,10,5,2.5,1.25];
+function openPlateCalcModal(startWeight){
+  openModal('Calculateur de plaques',`
+    <div class="field"><label>Poids total sur la barre (kg)</label><input type="number" id="plate-weight" value="${startWeight||''}" placeholder="100"></div>
+    <div id="plate-result" style="font-size:14px;"></div>
+  `,{onMount:(m)=>{
+    const input=$('#plate-weight',m), out=$('#plate-result',m);
+    function draw(){
+      const total=Number(input.value)||0;
+      const bar=20;
+      let perSide=(total-bar)/2;
+      if(perSide<=0){ out.innerHTML=`<div style="color:var(--text-dim);">Barre seule (${bar}kg) ${perSide<0?'— poids inférieur à la barre':''}</div>`; return; }
+      const used=[];
+      PLATE_SIZES.forEach(sz=>{
+        let n=Math.floor(perSide/sz+1e-9);
+        if(n>0){ used.push(`${n}× ${sz}kg`); perSide-=n*sz; }
+      });
+      out.innerHTML = `<div style="margin-bottom:6px;color:var(--text-dim);font-size:11.5px;">Par côté (barre 20kg) :</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;">${used.map(u=>`<span class="chip">${u}</span>`).join('')||'<span class="chip">—</span>'}</div>
+        ${perSide>0.01?`<div style="margin-top:8px;font-size:11.5px;color:var(--danger);">Reste ${(perSide*2).toFixed(2)}kg impossibles à charger avec ces plaques</div>`:''}`;
+    }
+    input.addEventListener('input',draw);
+    draw(); input.focus();
+  }});
 }
 function cardioFormHTML(s){
   const c=s.cardio||{duration:'',distance:'',avgHr:'',score:'',notes:''};
@@ -1412,18 +1909,19 @@ function bindSessionEvents(){
 
   const exitBtn=$('#exit-session'); if(exitBtn) exitBtn.addEventListener('click',()=>{ACTIVE_SESSION_ID=null;render();});
 
+  bindProfileField('freeform-profile',document);
   const freeStart=$('#freeform-start');
   if(freeStart) freeStart.addEventListener('click',()=>{
     const sportId=$('#freeform-sport').value;
-    const sess={id:uid(),date:todayISO(),sportId,routineId:null,blockId:null,status:'planned',entries:[],cardio:null,notes:''};
+    const profileId=resolveProfileField('freeform-profile',document);
+    if(!profileId){toast('Choisis ou crée un profil');return;}
+    const sess={id:uid(),date:todayISO(),sportId,routineId:null,blockId:null,status:'planned',entries:[],cardio:null,notes:'',profileId};
     DB.sessions.push(sess); saveDB(); openSessionDetail(sess.id);
   });
   $$('[data-pick]').forEach(el=>el.addEventListener('click',()=>openSessionDetail(el.dataset.pick)));
 
-  $$('.pick-ex').forEach(cb=>cb.addEventListener('change',()=>{
-    const variantSel=$(`.pick-ex-variant[data-for="${cb.value}"]`);
-    if(variantSel) variantSel.style.display = cb.checked? 'block':'none';
-  }));
+  const mainPicker=$('#main-picker-tabs');
+  if(mainPicker) bindExercisePickerTabs(document,'main-picker','pick-ex');
   const confirmEx=$('#confirm-exercises');
   if(confirmEx) confirmEx.addEventListener('click',()=>{
     const picked=$$('.pick-ex:checked').map(c=>{
@@ -1437,13 +1935,21 @@ function bindSessionEvents(){
 
   const addExBtn=$('#add-exercise-to-session');
   if(addExBtn) addExBtn.addEventListener('click',()=>{
-    const exs=sortExercisesByCategory(DB.exercises.filter(e=>e.sportId===s.sportId && !s.entries.some(en=>en.exId===e.id)));
-    openModal('Ajouter un exercice',`<div style="display:flex;flex-direction:column;gap:4px;">${exs.map(e=>`<button class="btn btn-secondary" data-add-this-ex="${e.id}" style="justify-content:flex-start;margin-bottom:8px;">${exerciseDisplayName(e)}</button>`).join('')}${!exs.length?`<div style="font-size:12.5px;color:var(--text-dim);margin-bottom:10px;">Tous les exercices existants du sport sont déjà dans la séance.</div>`:''}</div>
-    <button class="btn btn-ghost btn-sm" id="quick-create-exercise-2" style="margin-top:4px;">+ Créer un nouvel exercice</button>`,{onMount:(m)=>{
-      $$('[data-add-this-ex]',m).forEach(b=>b.addEventListener('click',()=>{
-        s.entries.push({exId:b.dataset.addThisEx,sets:[{weight:'',reps:'',rpe:'',bw:'',done:false},{weight:'',reps:'',rpe:'',bw:'',done:false},{weight:'',reps:'',rpe:'',bw:'',done:false}]});
+    const roots=sortExercisesByCategory(DB.exercises.filter(e=>e.sportId===s.sportId && !e.variantOf));
+    openModal('Ajouter un exercice',`
+    ${exercisePickerTabsHTML(roots,'add-picker','add-ex')}
+    <button class="btn btn-ghost btn-sm" id="quick-create-exercise-2" style="margin-top:12px;">+ Créer un nouvel exercice</button>
+    <button class="btn btn-primary" id="confirm-add-ex" style="margin-top:10px;">Ajouter à la séance</button>`,{onMount:(m)=>{
+      bindExercisePickerTabs(m,'add-picker','add-ex');
+      $('#confirm-add-ex',m).addEventListener('click',()=>{
+        const picked=$$('.add-ex:checked',m).map(c=>{
+          const variantSel=$(`.add-ex-variant[data-for="${c.value}"]`,m);
+          return variantSel? variantSel.value : c.value;
+        });
+        if(!picked.length){toast('Choisis au moins un exercice');return;}
+        picked.forEach(exId=>s.entries.push({exId,sets:[{weight:'',reps:'',rpe:'',bw:'',done:false},{weight:'',reps:'',rpe:'',bw:'',done:false},{weight:'',reps:'',rpe:'',bw:'',done:false}]}));
         saveDB(); closeModal(); render();
-      }));
+      });
       $('#quick-create-exercise-2',m).addEventListener('click',()=>{
         openQuickExerciseModal(s.sportId,(newEx)=>{
           s.entries.push({exId:newEx.id,sets:[{weight:'',reps:'',rpe:'',bw:'',done:false},{weight:'',reps:'',rpe:'',bw:'',done:false},{weight:'',reps:'',rpe:'',bw:'',done:false}]});
@@ -1504,6 +2010,16 @@ function bindSessionEvents(){
     const idx=+b.dataset.applySuggestion, w=b.dataset.suggWeight;
     const target = s.entries[idx].sets.find(st=>!st.weight) || s.entries[idx].sets[0];
     target.weight=w; saveDB(); render();
+  }));
+  $$('[data-goal-ex]').forEach(b=>b.addEventListener('click',()=>openGoalModal(b.dataset.goalEx)));
+  $$('[data-replace-ex]').forEach(b=>b.addEventListener('click',()=>{
+    const idx=+b.dataset.replaceEx;
+    openReplaceExerciseModal(s,idx);
+  }));
+  $$('[data-plate-calc]').forEach(b=>b.addEventListener('click',()=>{
+    const tr=b.closest('tr');
+    const weightInput=tr.querySelector('.set-input[data-field="weight"]');
+    openPlateCalcModal(weightInput?weightInput.value:'');
   }));
 
   const missBtn=$('#mark-missed');
@@ -1568,6 +2084,7 @@ function renderBlockDetail(){
   </div>
 
   <div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:14px;">
+    ${b.profileId?`<span class="chip" style="border-color:var(--accent)55;color:var(--accent);">👤 ${profileName(b.profileId)}</span>`:''}
     ${(b.sportIds||[]).map(id=>getSport(id)).filter(Boolean).map(sp=>`<span class="chip" style="border-color:${sp.color}55;color:${sp.color};">${sp.name}</span>`).join('')}
   </div>
 
@@ -1599,7 +2116,7 @@ function blockCalendarHTML(b){
       const inBlock = iso>=b.startDate && iso<=b.endDate;
       if(!inBlock){ row+=`<div class="cal-day other-month" style="visibility:hidden;"></div>`; continue; }
       const isToday=iso===todayISO();
-      const daySessions=DB.sessions.filter(s=>s.date===iso);
+      const daySessions=DB.sessions.filter(s=>s.date===iso && s.blockId===b.id);
       row+=`<div class="cal-day ${isToday?'today':''}" data-day="${iso}" data-block-day="${b.id}" style="cursor:pointer;">
         <span>${Number(iso.slice(8,10))}</span>
         <div class="pills">${daySessions.slice(0,4).map(s=>{const sp=getSport(s.sportId);return `<span class="cal-pill-dot" style="background:${s.status==='missed'?'var(--danger)':(sp?sp.color:'#888')};opacity:${s.status==='planned'?.5:1}"></span>`;}).join('')}</div>
@@ -1669,6 +2186,7 @@ function renderBlocksTab(){
       </div>
       ${b.blockType?`<div style="font-size:11.5px;color:var(--text-dim);margin:8px 0 4px;">${b.blockType}</div>`:''}
       <div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:10px;">
+        ${b.profileId?`<span class="chip" style="border-color:var(--accent)55;color:var(--accent);">👤 ${profileName(b.profileId)}</span>`:''}
         ${(b.sportIds||[]).map(id=>getSport(id)).filter(Boolean).map(sp=>`<span class="chip" style="border-color:${sp.color}55;color:${sp.color};">${sp.name}</span>`).join('') || `<span style="font-size:11.5px;color:var(--text-faint);">Aucun sport assigné</span>`}
       </div>
       <div style="font-size:12px;color:var(--text-faint);margin-bottom:12px;">${routines.length} routine(s) dans la semaine type</div>
@@ -1728,8 +2246,40 @@ function blockFormHTML(b={}){
       ${DB.sports.map(s=>`<label class="chip-select"><input type="checkbox" class="bf-sport" value="${s.id}" ${(b.sportIds||[]).includes(s.id)?'checked':''}><span class="sw" style="background:${s.color};"></span><span class="lbl">${s.name}</span></label>`).join('')}
       </div>
     </div>
+    ${profileFieldHTML('bf-profile', CURRENT_PROFILE_ID)}
     <div class="field"><label>Notes</label><textarea id="bf-notes" rows="2">${b.notes||''}</textarea></div>
   `;
+}
+/* Transfert d'une routine vers un autre profil du même appareil : lit et réécrit
+   directement le silo localStorage du profil cible (loadProfileData/localStorage.setItem)
+   SANS jamais charger ses autres données en mémoire dans DB — le profil actif ne voit
+   et ne touche à aucun moment aux données personnelles de l'autre profil, seule la
+   routine copiée y est ajoutée. La routine reste aussi dans le profil d'origine. */
+function openTransferRoutineModal(routineId){
+  const r=getRoutine(routineId); if(!r) return;
+  const targets=(GLOBAL.profiles||[]).filter(p=>p.id!==CURRENT_PROFILE_ID);
+  if(!targets.length){ toast('Aucun autre profil sur cet appareil'); return; }
+  openModal('Transférer "'+r.name+'"',`
+    <div style="font-size:12.5px;color:var(--text-dim);margin-bottom:12px;">Une copie de cette routine sera ajoutée au profil choisi (elle reste aussi dans ${profileName(CURRENT_PROFILE_ID)}).</div>
+    <div id="transfer-target-list">
+    ${targets.map(p=>`<button type="button" class="list-item" data-transfer-target="${p.id}" style="width:100%;background:none;border:none;cursor:pointer;text-align:left;">
+      <div class="swatch" style="background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;border-radius:50%;">${initial2(p.name)}</div>
+      <div class="main"><div class="title">${p.name}</div></div>
+    </button>`).join('')}
+    </div>
+  `,{onMount:(m)=>{
+    $$('[data-transfer-target]',m).forEach(b=>b.addEventListener('click',()=>{
+      const targetId=b.dataset.transferTarget;
+      const pd=loadProfileData(targetId);
+      const copy=JSON.parse(JSON.stringify(r));
+      copy.id=uid();
+      copy.blockId=null; /* un bloc est propre à un profil : la copie en est détachée */
+      pd.routines.push(copy);
+      localStorage.setItem(profileStorageKey(targetId), JSON.stringify(pd));
+      closeModal();
+      toast('Routine transférée vers '+profileName(targetId));
+    }));
+  }});
 }
 function renderRoutinesTab(){
   const list=[...DB.routines].sort((a,b)=>(a.name||'').localeCompare(b.name));
@@ -1743,6 +2293,7 @@ function renderRoutinesTab(){
       <div style="font-size:12px;color:var(--text-dim);margin-bottom:10px;">${['strength','mixed'].includes(sport.type)?(r.items||[]).length+' exercice(s)':'cardio libre'}</div>
       <div class="row"><button class="btn btn-secondary btn-sm" data-edit-routine="${r.id}">Modifier</button><button class="btn btn-secondary btn-sm" data-plan-routine="${r.id}">Planifier</button></div>
       <div class="row" style="margin-top:8px;"><button class="btn btn-ghost btn-sm" data-dup-routine="${r.id}">Dupliquer</button><button class="btn btn-danger btn-sm" data-del-routine="${r.id}">Suppr.</button></div>
+      <div class="row" style="margin-top:8px;"><button class="btn btn-ghost btn-sm" data-transfer-routine="${r.id}" style="width:100%;">⇄ Transférer vers un autre profil</button></div>
     </div>`;
   }).join('') : ''}
   </div>
@@ -1774,9 +2325,17 @@ function routineItemRow(it={},i,sportId){
     <div class="field" style="flex:1;min-width:100px;"><label>Variante</label><select class="rf-item-variant">${variantOptionsHTML(rootId, it.exerciseId)}</select></div>
     <div class="field" style="flex:0.6;min-width:64px;"><label>Séries</label><input type="number" class="rf-item-sets" value="${it.targetSets||3}"></div>
     <div class="field" style="flex:0.8;min-width:76px;"><label>Reps</label><input class="rf-item-reps" value="${it.targetReps||'8-10'}"></div>
+    <div style="display:flex;gap:2px;margin-bottom:14px;flex-shrink:0;">
+      <button type="button" class="icon-btn rf-item-up" title="Monter" style="width:28px;"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15l-6-6-6 6"/></svg></button>
+      <button type="button" class="icon-btn rf-item-down" title="Descendre" style="width:28px;"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></button>
+    </div>
     <button type="button" class="icon-btn rf-item-remove" title="Retirer cet exercice" style="margin-bottom:14px;flex-shrink:0;color:var(--danger);"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m2 0v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V6"/></svg></button>
   </div>`;
 }
+/* ---- Bibliothèque d'exercices : par sport (dépliable), puis onglets de catégorie + recherche
+   (même composant visuel que le picker "Choisir un exercice" du Programme/de la séance), au lieu
+   de l'ancienne liste empilée avec en-têtes de catégorie. Les actions (modifier/variante/supprimer)
+   restent identiques, seule la navigation par catégorie change de format. */
 function renderExercisesTab(){
   const grouped={};
   DB.exercises.forEach(e=>{(grouped[e.sportId]=grouped[e.sportId]||[]).push(e);});
@@ -1787,36 +2346,43 @@ function renderExercisesTab(){
     const sport=getSport(sid)||{name:'Sport supprimé',color:'#888'};
     const roots=sortExercisesByCategory(grouped[sid].filter(e=>!e.variantOf));
     const variantsOf=(rootId)=>grouped[sid].filter(e=>e.variantOf===rootId);
-    let curCat=null;
     const isOpen = EX_SPORT_OPEN[sid]!==undefined ? EX_SPORT_OPEN[sid] : sIdx===0;
+    const byCat={};
+    roots.forEach(e=>{ const cat=exerciseCategory(e); (byCat[cat]=byCat[cat]||[]).push(e); });
+    const cats=(DB.categories||DEFAULT_CATEGORIES).filter(c=>byCat[c]&&byCat[c].length);
+    const idPrefix=`exlib-${sid}`;
+    const rowHTML=(e)=>{
+      const variants=variantsOf(e.id);
+      return `<div class="ex-item-card" data-lib-row>
+      <div class="ex-item-row">
+        <div class="ex-item-info" data-lib-label><div class="ex-item-title">${e.name}</div><div class="ex-item-meta">${muscleArr(e).join(', ')||e.zone||''}</div></div>
+        <div class="ex-item-actions">
+          ${variants.length?`<button type="button" class="chip variant-toggle" data-toggle-variants="${e.id}" style="border:none;color:var(--text-dim);gap:4px;">${variants.length} variante${variants.length>1?'s':''}<svg class="chevron" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="transition:transform .15s;"><path d="M6 9l6 6 6-6"/></svg></button>`:''}
+          <button class="chip" data-edit-exercise="${e.id}" style="border:none;color:var(--text-dim);">modifier</button>
+          <button class="chip" data-add-variant="${e.id}" style="border:none;color:var(--accent);">+ variante</button>
+          <button class="icon-btn" data-del-exercise="${e.id}" style="width:32px;height:32px;flex-shrink:0;"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m2 0v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V6"/></svg></button>
+        </div>
+      </div>
+      ${variants.length?`<div class="variants-wrap" id="variants-${e.id}" style="display:none;">${variants.map(v=>`<div class="ex-variant-row"><div class="swatch" style="background:${sport.color}44;"></div><div class="main"><div class="title">${e.name} - ${v.name}</div><div class="meta">variante · ${muscleArr(v).join(', ')||v.zone||v.category||''}</div></div>
+      <div class="actions">
+        <button class="chip" data-edit-exercise="${v.id}" style="border:none;color:var(--text-dim);">modifier</button>
+        <button class="icon-btn" data-del-exercise="${v.id}" style="width:30px;height:30px;flex-shrink:0;"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m2 0v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V6"/></svg></button>
+      </div></div>`).join('')}</div>`:''}
+      </div>`;
+    };
     return `<button type="button" class="ex-sport-title" data-toggle-sport="${sid}" style="margin-top:${sIdx===0?'0':'12px'};">
       <span class="dot" style="background:${sport.color}"></span>
       <h2 style="color:${sport.color}">${sport.name}</h2>
       <span class="ex-sport-count">${roots.length} exercice${roots.length>1?'s':''}</span>
       <svg class="chevron" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="transition:transform .15s;transform:rotate(${isOpen?0:-90}deg);"><path d="M6 9l6 6 6-6"/></svg>
     </button>
-    <div class="ex-grid" id="exgrid-${sid}" style="display:${isOpen?'grid':'none'};">
-      ${roots.map(e=>{
-        const cat=exerciseCategory(e);
-        const header = cat!==curCat ? (curCat=cat, `<div class="ex-cat-header">${cat}</div>`) : '';
-        const variants=variantsOf(e.id);
-        return `${header}<div class="ex-item-card">
-        <div class="ex-item-row">
-          <div class="ex-item-info"><div class="ex-item-title">${e.name}</div><div class="ex-item-meta">${muscleArr(e).join(', ')||e.zone||''}</div></div>
-          <div class="ex-item-actions">
-            ${variants.length?`<button type="button" class="chip variant-toggle" data-toggle-variants="${e.id}" style="border:none;color:var(--text-dim);gap:4px;">${variants.length} variante${variants.length>1?'s':''}<svg class="chevron" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="transition:transform .15s;"><path d="M6 9l6 6 6-6"/></svg></button>`:''}
-            <button class="chip" data-edit-exercise="${e.id}" style="border:none;color:var(--text-dim);">modifier</button>
-            <button class="chip" data-add-variant="${e.id}" style="border:none;color:var(--accent);">+ variante</button>
-            <button class="icon-btn" data-del-exercise="${e.id}" style="width:32px;height:32px;flex-shrink:0;"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m2 0v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V6"/></svg></button>
-          </div>
-        </div>
-        ${variants.length?`<div class="variants-wrap" id="variants-${e.id}" style="display:none;">${variants.map(v=>`<div class="ex-variant-row"><div class="swatch" style="background:${sport.color}44;"></div><div class="main"><div class="title">${e.name} - ${v.name}</div><div class="meta">variante · ${muscleArr(v).join(', ')||v.zone||v.category||''}</div></div>
-        <div class="actions">
-          <button class="chip" data-edit-exercise="${v.id}" style="border:none;color:var(--text-dim);">modifier</button>
-          <button class="icon-btn" data-del-exercise="${v.id}" style="width:30px;height:30px;flex-shrink:0;"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m2 0v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V6"/></svg></button>
-        </div></div>`).join('')}</div>`:''}
-      </div>`;
-      }).join('')}
+    <div class="ex-lib-outer" id="exgrid-${sid}" style="display:${isOpen?'block':'none'};">
+      ${!cats.length?`<div style="font-size:12.5px;color:var(--text-dim);padding:8px 2px;">Aucun exercice pour ce sport.</div>`:`
+      <input id="${idPrefix}-search" placeholder="Rechercher un exercice..." style="margin-bottom:10px;">
+      <div class="tabs-sub" style="flex-wrap:wrap;">${cats.map((c,i)=>`<button type="button" data-lib-tab="${c}" class="${i===0?'active':''}">${c}</button>`).join('')}</div>
+      <div class="ex-lib-panels">
+      ${cats.map((c,i)=>`<div class="ex-grid" data-lib-panel="${c}" style="display:${i===0?'grid':'none'};">${byCat[c].map(rowHTML).join('')}</div>`).join('')}
+      </div>`}
     </div>`;
   }).join('')}
   `;
@@ -1838,6 +2404,8 @@ function openExerciseModal(existing){
     <div class="field"><label>Variante de (optionnel)</label><select id="exf-variant-of">${variantOfOptionsHTML(ex.sportId||(DB.sports[0]||{}).id,ex.variantOf||'',ex.id)}</select></div>
     <div id="exf-cat-wrap" class="field"><label>Catégorie</label><select id="exf-cat">${exerciseCategoryOptionsHTML(ex.category)}</select></div>
     <div class="field"><label>Muscles principaux</label>${multiMusclePickerHTML('exf-primary', muscleArr(ex))}</div>
+    <label style="display:flex;align-items:center;gap:8px;margin:2px 0 4px;"><input type="checkbox" id="exf-poly" style="width:18px;height:18px;flex-shrink:0;"><span>Mouvement polyarticulaire</span></label>
+    <div style="font-size:11px;color:var(--text-faint);margin-bottom:10px;">Coché automatiquement si plusieurs muscles principaux sont sélectionnés — décoche/coche pour corriger manuellement (ex: Curl marteau = biceps + avant-bras mais reste isolation).</div>
     <div id="exf-batch-variants-wrap" class="field">
       <label>Variantes (optionnel)</label>
       <div id="exf-variant-chips" class="tag-wrap" style="margin-bottom:8px;"></div>
@@ -1848,6 +2416,18 @@ function openExerciseModal(existing){
   `,{onMount:(m)=>{
     $('#exf-name',m).focus();
     bindMultiMusclePicker('exf-primary',m);
+    /* Case "polyarticulaire" : initialisée à la classification actuelle (auto ou forcée),
+       puis ré-alignée automatiquement sur le nombre de muscles tant que l'utilisateur ne l'a
+       pas corrigée lui-même dans cette session d'édition (polyTouched). */
+    const polyChk=$('#exf-poly',m);
+    let polyTouched=false;
+    polyChk.checked = isPolyarticular(ex);
+    polyChk.addEventListener('change',()=>{ polyTouched=true; });
+    $$('#exf-primary-chips .chip-toggle',m).forEach(btn=>btn.addEventListener('click',()=>{
+      if(polyTouched) return;
+      const n=$$('#exf-primary-chips .chip-toggle.active',m).length;
+      polyChk.checked = n>1;
+    }));
     let pending=[]; // variantes pas encore enregistrées (mode création uniquement)
     function refreshVariantOfOptions(){
       $('#exf-variant-of',m).innerHTML=variantOfOptionsHTML($('#exf-sport',m).value, $('#exf-variant-of',m).value, ex.id);
@@ -1889,7 +2469,14 @@ function openExerciseModal(existing){
       const variantOfVal=$('#exf-variant-of',m).value||null;
       const parentEx=variantOfVal?getExercise(variantOfVal):null;
       const category=parentEx?parentEx.category:$('#exf-cat',m).value;
-      const data={name,sportId:$('#exf-sport',m).value,category,primaryMuscle:$('#exf-primary',m).value.split(',').filter(Boolean),variantOf:variantOfVal};
+      const primaryMuscle=$('#exf-primary',m).value.split(',').filter(Boolean);
+      /* On ne stocke un override explicite que si la case diverge de la détection auto
+         (>1 muscle = polyarticulaire) — sinon on laisse polyarticular=null pour que la
+         classification continue de suivre les muscles si l'exercice est modifié plus tard. */
+      const autoPoly=primaryMuscle.length>1;
+      const polyChecked=$('#exf-poly',m).checked;
+      const polyarticular = polyChecked===autoPoly ? null : polyChecked;
+      const data={name,sportId:$('#exf-sport',m).value,category,primaryMuscle,polyarticular,variantOf:variantOfVal};
       if(editing){
         delete ex.zone; delete ex.region; delete ex.muscle; delete ex.pattern; delete ex.secondaryMuscles;
         Object.assign(ex,data);
@@ -1958,15 +2545,22 @@ function bindProgramsEvents(){
     const copy=JSON.parse(JSON.stringify(r)); copy.id=uid(); copy.name=r.name+' (copie)';
     DB.routines.push(copy); saveDB(); toast('Routine dupliquée'); render();
   }));
+  $$('[data-transfer-routine]').forEach(b=>b.addEventListener('click',()=>openTransferRoutineModal(b.dataset.transferRoutine)));
   $$('[data-plan-routine]').forEach(b=>b.addEventListener('click',()=>{
     const r=getRoutine(b.dataset.planRoutine);
+    const linkedBlock=r.blockId?getBlock(r.blockId):null;
     openModal('Planifier "'+r.name+'"',`
     ${routineDetailHTML(r.id)}
     <div class="field"><label>Date</label><input type="date" id="plan-date" value="${todayISO()}"></div>
+    <div style="display:none;">${profileFieldHTML('plan-profile-select', CURRENT_PROFILE_ID)}</div>
     <button class="btn btn-primary" id="plan-confirm">Ajouter au calendrier</button>`,{onMount:(m)=>{
+      bindProfileField('plan-profile-select',m);
       $('#plan-confirm',m).addEventListener('click',()=>{
         const date=$('#plan-date',m).value;
-        DB.sessions.push({id:uid(),date,sportId:r.sportId,routineId:r.id,blockId:null,status:'planned',entries:buildEntriesFromRoutine(r.id, date),cardio:null,notes:''});
+        let profileId;
+        if(linkedBlock && linkedBlock.profileId){ profileId=linkedBlock.profileId; }
+        else { profileId=resolveProfileField('plan-profile-select',m); if(!profileId){toast('Choisis ou crée un profil');return;} }
+        DB.sessions.push({id:uid(),date,sportId:r.sportId,routineId:r.id,blockId:r.blockId||null,status:'planned',entries:buildEntriesFromRoutine(r.id, date, profileId),cardio:null,notes:'',profileId});
         saveDB(); closeModal(); toast('Séance planifiée le '+fmtDate(date,{short:true}));
       });
     }});
@@ -1996,10 +2590,36 @@ function bindProgramsEvents(){
     if(!wrap) return;
     const open = wrap.style.display==='none';
     EX_SPORT_OPEN[sid]=open;
-    wrap.style.display = open?'grid':'none';
+    wrap.style.display = open?'block':'none';
     const chev=b.querySelector('.chevron');
     if(chev) chev.style.transform = open?'rotate(0deg)':'rotate(-90deg)';
   }));
+  /* Onglets de catégorie + recherche de la Bibliothèque d'exercices (même UX que le picker
+     "Choisir un exercice"). Scopé à chaque section de sport via .ex-lib-outer pour que plusieurs
+     sections dans le DOM ne s'interfèrent pas. */
+  $$('[data-lib-tab]').forEach(btn=>btn.addEventListener('click',()=>{
+    const root=btn.closest('.ex-lib-outer');
+    $$('[data-lib-tab]',root).forEach(b=>b.classList.toggle('active',b===btn));
+    $$('[data-lib-panel]',root).forEach(p=>p.style.display = p.dataset.libPanel===btn.dataset.libTab ? 'grid':'none');
+  }));
+  $$('input[id^="exlib-"][id$="-search"]').forEach(search=>{
+    const root=search.closest('.ex-lib-outer');
+    search.addEventListener('input',()=>{
+      const q=search.value.trim().toLowerCase();
+      if(!q){
+        const activeTab=$('[data-lib-tab].active',root);
+        $$('[data-lib-panel]',root).forEach(p=>p.style.display = p.dataset.libPanel===activeTab?.dataset.libTab ? 'grid':'none');
+        $$('[data-lib-row]',root).forEach(r=>r.style.display='');
+        return;
+      }
+      $$('[data-lib-panel]',root).forEach(p=>p.style.display='grid');
+      $$('[data-lib-row]',root).forEach(r=>{
+        const label=r.querySelector('[data-lib-label]');
+        const match=label && label.textContent.toLowerCase().includes(q);
+        r.style.display=match?'':'none';
+      });
+    });
+  });
   $$('[data-add-variant]').forEach(b=>b.addEventListener('click',()=>{
     const parent=getExercise(b.dataset.addVariant);
     openModal('Nouvelle variante de "'+parent.name+'"',`
@@ -2054,10 +2674,13 @@ function openBlockModal(b,onSaved){
   const editing=!!b; b=b||{};
   openModal(editing?'Modifier le bloc':'Nouveau bloc', blockFormHTML(b)+`<button class="btn btn-primary" id="bf-save" style="margin-top:6px;">Enregistrer</button>`,{onMount:(m)=>{
     bindGrayscalePicker('bf-color',m);
+    bindProfileField('bf-profile',m);
     $('#bf-save',m).addEventListener('click',()=>{
       const name=$('#bf-name',m).value.trim(); if(!name){toast('Nom requis');return;}
       const sportIds=$$('.bf-sport:checked',m).map(c=>c.value);
-      const data={name,blockType:$('#bf-type',m).value,startDate:$('#bf-start',m).value,endDate:$('#bf-end',m).value,sportIds,notes:$('#bf-notes',m).value,color:$('#bf-color',m).value};
+      const profileId=resolveProfileField('bf-profile',m);
+      if(!profileId){toast('Choisis ou crée un profil');return;}
+      const data={name,blockType:$('#bf-type',m).value,startDate:$('#bf-start',m).value,endDate:$('#bf-end',m).value,sportIds,notes:$('#bf-notes',m).value,color:$('#bf-color',m).value,profileId};
       let block;
       if(editing){ Object.assign(b,data); block=b; }
       else { block={id:uid(),weeklyPlan:{},autoProgression:{enabled:false,mode:'percent',value:2.5},...data}; DB.blocks.push(block); }
@@ -2075,7 +2698,7 @@ function duplicateBlock(b){
       const newStart=$('#dupb-start',m).value;
       const durationDays=isoWeeksBetween(b.startDate,b.endDate)*7 || Math.round((new Date(b.endDate)-new Date(b.startDate))/864e5);
       const newEnd=addDays(newStart,durationDays);
-      const newBlock={id:uid(),name:b.name+' (copie)',blockType:b.blockType,startDate:newStart,endDate:newEnd,sportIds:[...(b.sportIds||[])],notes:b.notes,color:nextBlockColor(),weeklyPlan:{},autoProgression:JSON.parse(JSON.stringify(b.autoProgression||{enabled:false,mode:'percent',value:2.5}))};
+      const newBlock={id:uid(),name:b.name+' (copie)',blockType:b.blockType,startDate:newStart,endDate:newEnd,sportIds:[...(b.sportIds||[])],notes:b.notes,color:nextBlockColor(),profileId:b.profileId,weeklyPlan:{},autoProgression:JSON.parse(JSON.stringify(b.autoProgression||{enabled:false,mode:'percent',value:2.5}))};
       if($('#dupb-routines',m).checked){
         const routineMap={};
         const usedIds=new Set(Object.values(b.weeklyPlan||{}).flat());
@@ -2130,8 +2753,8 @@ function openWeekPlanModal(b){
           const already=DB.sessions.some(s=>s.date===cursor && s.routineId===rid);
           if(already){ skipped++; return; }
           const r=getRoutine(rid); if(!r) return;
-          const entries=buildEntriesFromRoutine(r.id, cursor);
-          DB.sessions.push({id:uid(),date:cursor,sportId:r.sportId,routineId:r.id,blockId:b.id,status:'planned',entries,cardio:null,notes:''});
+          const entries=buildEntriesFromRoutine(r.id, cursor, b.profileId);
+          DB.sessions.push({id:uid(),date:cursor,sportId:r.sportId,routineId:r.id,blockId:b.id,status:'planned',entries,cardio:null,notes:'',profileId:b.profileId});
           created++;
         });
         cursor=addDays(cursor,1);
@@ -2142,19 +2765,30 @@ function openWeekPlanModal(b){
 }
 function openQuickVariantModal(sportId, onCreated){
   const sport=getSport(sportId);
-  const parents=DB.exercises.filter(e=>e.sportId===sportId && !e.variantOf);
-  if(!parents.length){ toast('Crée d\'abord un exercice de référence pour ce sport'); return; }
-  openModal('Ajouter une variante — '+(sport?.name||''),`
-    <div class="field"><label>Exercice de référence</label><select id="qvar-parent">${sortExercisesByCategory(parents).map(e=>`<option value="${e.id}">${e.name}</option>`).join('')}</select></div>
-    <div class="field"><label>Nom de la variante</label><input id="qvar-name" placeholder="Ex: Posé, Tempo, Incliné..."></div>
-    <button class="btn btn-primary" id="qvar-save">Créer et ajouter</button>
+  const roots=sortExercisesByCategory(DB.exercises.filter(e=>e.sportId===sportId && !e.variantOf));
+  if(!roots.length){ toast('Crée d\'abord un exercice de référence pour ce sport'); return; }
+  openModal('Créer une variante — '+(sport?.name||''),`
+    <div style="font-size:12px;color:var(--text-dim);margin-bottom:10px;">Étape 1/2 — Choisis l'exercice pour lequel créer une variante</div>
+    ${exercisePickerTabsHTML(roots,'qvar-picker','qvar-pick-ex',{single:true,hideVariants:true})}
+    <button class="btn btn-primary" id="qvar-picker-next" style="margin-top:10px;">Continuer</button>
   `,{onMount:(m)=>{
-    $('#qvar-name',m).focus();
-    $('#qvar-save',m).addEventListener('click',()=>{
-      const name=$('#qvar-name',m).value.trim(); if(!name){toast('Nom requis');return;}
-      const parent=getExercise($('#qvar-parent',m).value);
-      const newEx={id:uid(),name,sportId,category:parent.category,primaryMuscle:parent.primaryMuscle,variantOf:parent.id};
-      DB.exercises.push(newEx); saveDB(); closeModal(); toast('Variante créée'); onCreated(newEx);
+    bindExercisePickerTabs(m,'qvar-picker','qvar-pick-ex');
+    $('#qvar-picker-next',m).addEventListener('click',()=>{
+      const picked=$('.qvar-pick-ex:checked',m);
+      if(!picked){toast('Choisis un exercice');return;}
+      const parent=getExercise(picked.value);
+      openModal('Créer une variante — '+parent.name,`
+        <div style="font-size:12px;color:var(--text-dim);margin-bottom:10px;">Étape 2/2 — Nom de la variante de <strong style="color:var(--text);">${parent.name}</strong></div>
+        <div class="field"><label>Nom de la variante</label><input id="qvar-name" placeholder="Ex: Posé, Tempo, Incliné..."></div>
+        <button class="btn btn-primary" id="qvar-save">Créer et ajouter</button>
+      `,{onMount:(m2)=>{
+        $('#qvar-name',m2).focus();
+        $('#qvar-save',m2).addEventListener('click',()=>{
+          const name=$('#qvar-name',m2).value.trim(); if(!name){toast('Nom requis');return;}
+          const newEx={id:uid(),name,sportId,category:parent.category,primaryMuscle:parent.primaryMuscle,variantOf:parent.id};
+          DB.exercises.push(newEx); saveDB(); closeModal(); toast('Variante créée'); onCreated(newEx);
+        });
+      }});
     });
   }});
 }
@@ -2167,12 +2801,41 @@ function openRoutineModal(r){
     }
     $('#rf-sport',m).addEventListener('change',refreshItemsVisibility); refreshItemsVisibility();
     $('#rf-add-item',m).addEventListener('click',()=>{
-      const wrap=$('#rf-items',m); const i=wrap.children.length;
-      wrap.insertAdjacentHTML('beforeend',routineItemRow({},i,$('#rf-sport',m).value));
+      const sportId=$('#rf-sport',m).value;
+      const roots=sortExercisesByCategory(DB.exercises.filter(e=>e.sportId===sportId && !e.variantOf));
+      openModal('Choisir un exercice',`
+        ${exercisePickerTabsHTML(roots,'rf-picker','rf-pick-ex')}
+        <button class="btn btn-primary" id="rf-picker-confirm" style="margin-top:10px;">Ajouter à la routine</button>
+      `,{onMount:(pm)=>{
+        bindExercisePickerTabs(pm,'rf-picker','rf-pick-ex');
+        $('#rf-picker-confirm',pm).addEventListener('click',()=>{
+          const picked=$$('.rf-pick-ex:checked',pm).map(c=>{
+            const variantSel=$(`.rf-pick-ex-variant[data-for="${c.value}"]`,pm);
+            return variantSel? variantSel.value : c.value;
+          });
+          if(!picked.length){toast('Choisis au moins un exercice');return;}
+          const wrap=$('#rf-items',m);
+          picked.forEach(exId=>{
+            const i=wrap.children.length;
+            wrap.insertAdjacentHTML('beforeend',routineItemRow({exerciseId:exId},i,sportId));
+          });
+          closeModal();
+        });
+      }});
     });
     $('#rf-items',m).addEventListener('click',(e)=>{
       const btn=e.target.closest('.rf-item-remove');
       if(btn) btn.closest('[data-item]').remove();
+      const upBtn=e.target.closest('.rf-item-up');
+      if(upBtn){
+        const row=upBtn.closest('[data-item]'); const prev=row.previousElementSibling;
+        if(prev) row.parentNode.insertBefore(row,prev);
+      }
+      const downBtn=e.target.closest('.rf-item-down');
+      if(downBtn){
+        const row=downBtn.closest('[data-item]'); const next=row.nextElementSibling;
+        if(next) row.parentNode.insertBefore(next,row);
+      }
     });
     $('#rf-items',m).addEventListener('change',(e)=>{
       if(!e.target.classList.contains('rf-item-root')) return;
@@ -2211,13 +2874,23 @@ function renderStats(){
   `;
 }
 
-/* ---- Progression: volume hebdo + courbe 1RM + km cumulés ---- */
+/* ---- Progression: volume hebdo + charge réelle sur exercice clé + km cumulés ----
+   NOTE NOMMAGE : ce conteneur de page s'appelle renderProgressionTab() (et non renderProgression())
+   pour ne pas casser le point d'appel existant dans renderStats() — c'est la fonction demandée
+   "renderProgression()" en pratique : elle assemble la page Progression complète. */
 function renderProgressionTab(){
   const weeks=lastNWeeks(10);
   const volBySport={};
   DB.sports.forEach(sp=>volBySport[sp.id]=weeks.map(w=>DB.sessions.filter(s=>s.status==='done'&&s.sportId===sp.id&&weekKey(s.date)===w).reduce((sum,s)=>sum+sessionVolume(s),0)));
-  const strengthEx=sortExercisesByCategory(DB.exercises.filter(e=>!e.variantOf && ['strength','mixed'].includes(getSport(e.sportId)?.type)));
-  const selectedExId = STATS_SELECTED_EX || (strengthEx[0] && strengthEx[0].id);
+  /* Sélection en cascade : d'abord l'exercice RACINE (liste courte, groupée par catégorie),
+     puis sa variante ("Normal" + variantes) dans un second select — on ne montre plus toutes
+     les variantes à plat dans une seule liste. */
+  const strengthRoots=sortExercisesByCategory(DB.exercises.filter(e=>!e.variantOf && ['strength','mixed'].includes(getSport(e.sportId)?.type)));
+  const selectedEx0=(STATS_SELECTED_EX && getExercise(STATS_SELECTED_EX)) ? getExercise(STATS_SELECTED_EX) : null;
+  const selectedRootId=(selectedEx0 ? (selectedEx0.variantOf||selectedEx0.id) : (strengthRoots[0]&&strengthRoots[0].id));
+  const selectedExId=(selectedEx0 && (selectedEx0.variantOf||selectedEx0.id)===selectedRootId) ? selectedEx0.id : selectedRootId;
+  const formats = selectedExId ? availableFormats(selectedExId) : [];
+  const selectedFormat = (formats.find(f=>f.key===STATS_SELECTED_FORMAT) || formats[0] || null);
   const kmSeries = weeks.map(w=>DB.sessions.filter(s=>s.status==='done'&&s.cardio&&weekKey(s.date)===w).reduce((sum,s)=>sum+(Number(s.cardio.distance)||0),0));
   return `
   <div class="card">
@@ -2225,10 +2898,13 @@ function renderProgressionTab(){
     ${barChart(weeks.map(w=>fmtDate(w,{short:true})), Object.entries(volBySport).filter(([,v])=>v.some(x=>x>0)).map(([sid,v])=>({label:getSport(sid).name,color:getSport(sid).color,values:v})))}
   </div>
   <div class="card">
-    <div class="card-header"><h2>Charge sur exercice clé</h2>
-      <select id="stat-ex-select" style="width:auto;font-size:12px;padding:6px 8px;">${strengthEx.map(e=>`<option value="${e.id}" ${e.id===selectedExId?'selected':''}>${e.name}</option>`).join('')}</select>
+    <div class="card-header"><h2>Charge sur exercice clé</h2></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+      <select id="stat-ex-select" style="width:auto;font-size:12px;padding:6px 8px;">${statsRootOptionsHTML(strengthRoots, selectedRootId)}</select>
+      <select id="stat-variant-select" style="width:auto;font-size:12px;padding:6px 8px;">${variantOptionsHTML(selectedRootId, selectedExId)}</select>
+      ${formats.length?`<select id="stat-format-select" style="width:auto;font-size:12px;padding:6px 8px;">${formats.map(f=>`<option value="${f.key}" ${selectedFormat&&f.key===selectedFormat.key?'selected':''}>${f.setsCount}×${f.repsCount}</option>`).join('')}</select>`:''}
     </div>
-    ${lineChart1RM(selectedExId)}
+    ${renderKeyExerciseChart(selectedExId, selectedFormat?selectedFormat.key:null)}
   </div>
   <div class="card">
     <div class="card-header"><h2>Kilométrage cumulé</h2></div>
@@ -2236,7 +2912,58 @@ function renderProgressionTab(){
   </div>
   `;
 }
+/* Options du select "Exercice" (racines uniquement, groupées par catégorie) pour la page Progression. */
+function statsRootOptionsHTML(roots, selectedRootId){
+  let html='', curCat=null;
+  roots.forEach(e=>{
+    const cat=exerciseCategory(e);
+    if(cat!==curCat){ if(curCat!==null) html+='</optgroup>'; html+=`<optgroup label="${cat}">`; curCat=cat; }
+    html+=`<option value="${e.id}" ${e.id===selectedRootId?'selected':''}>${e.name}</option>`;
+  });
+  if(curCat!==null) html+='</optgroup>';
+  return html;
+}
 let STATS_SELECTED_EX=null;
+let STATS_SELECTED_FORMAT=null;
+
+/* Renvoie, pour un exId EXACT (exercice + variante précise, pas la racine), tous les points
+   de charge RÉELLE (kg réellement soulevés, pas de 1RM estimé) issus des séances validées,
+   avec le "format" [nombre de séries validées x nombre de reps dominant] de chaque séance.
+   Deux formats différents (5x5 vs 4x5, ou une autre variante) ne se mélangent JAMAIS : le tri
+   par format se fait ensuite dans availableFormats()/renderKeyExerciseChart(). */
+function exerciseFormatPoints(exId){
+  const out=[];
+  [...DB.sessions].filter(s=>s.status==='done').sort((a,b)=>a.date.localeCompare(b.date)).forEach(s=>{
+    (s.entries||[]).forEach(ex=>{
+      if(ex.exId!==exId) return;
+      const done=(ex.sets||[]).filter(st=>st.done && (Number(st.weight)||0)>0 && (Number(st.reps)||0)>0);
+      if(!done.length) return;
+      const setsCount=done.length;
+      const repsCount=modeValue(done.map(st=>Number(st.reps)));
+      const weight=Math.max(...done.map(st=>Number(st.weight))); // charge réelle max de la séance pour ce format
+      out.push({date:s.date, setsCount, repsCount, weight});
+    });
+  });
+  return out;
+}
+/* Valeur la plus fréquente d'un tableau (ex: reps dominantes d'une séance en 5x5 -> 5) */
+function modeValue(arr){
+  const freq={}; let best=arr[0], bestCount=0;
+  arr.forEach(v=>{ freq[v]=(freq[v]||0)+1; if(freq[v]>bestCount){bestCount=freq[v];best=v;} });
+  return best;
+}
+function formatKey(setsCount,repsCount){ return `${setsCount}x${repsCount}`; }
+/* Liste des formats [séries x reps] réellement enregistrés pour un exId exact, triés du plus
+   fréquent au plus récent en cas d'égalité — sert à peupler le filtre "format" du graphique. */
+function availableFormats(exId){
+  const map={};
+  exerciseFormatPoints(exId).forEach(p=>{
+    const k=formatKey(p.setsCount,p.repsCount);
+    if(!map[k]) map[k]={key:k,setsCount:p.setsCount,repsCount:p.repsCount,count:0};
+    map[k].count++;
+  });
+  return Object.values(map).sort((a,b)=> b.count-a.count || a.setsCount-b.setsCount || a.repsCount-b.repsCount);
+}
 function lastNWeeks(n){
   const cur=weekKey(todayISO()); const arr=[];
   for(let i=n-1;i>=0;i--) arr.push(addDays(cur,-7*i));
@@ -2263,40 +2990,164 @@ function barChart(labels,series){
   return `<div class="chart-wrap"><svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" style="min-width:${W}px;">${bars}</svg></div>
   <div class="legend">${series.map(s=>`<div class="li"><span class="sw" style="background:${s.color}"></span>${s.label}</div>`).join('')}</div>`;
 }
-function lineChart1RM(exId){
-  if(!exId) return `<div class="empty-state" style="padding:20px 4px;"><div class="d">Aucun exercice de force enregistré.</div></div>`;
-  const points=[];
-  [...DB.sessions].filter(s=>s.status==='done').sort((a,b)=>a.date.localeCompare(b.date)).forEach(s=>{
-    (s.entries||[]).filter(ex=>trackingExId(ex.exId)===exId).forEach(ex=>{
-      const best=ex.sets.reduce((m,st)=>Math.max(m,est1RM(st.weight,st.reps)),0);
-      if(best>0) points.push({date:s.date,val:best});
-    });
-  });
-  if(!points.length) return `<div class="empty-state" style="padding:20px 4px;"><div class="d">Pas encore de série validée pour cet exercice.</div></div>`;
-  const W=Math.max(320,points.length*44), H=150, padB=20,padT=16,padL=6;
-  const max=Math.max(...points.map(p=>p.val))*1.08, min=Math.min(...points.map(p=>p.val))*0.9;
-  const stepX=(W-padL-10)/Math.max(1,points.length-1);
-  const y=v=>padT+(1-(v-min)/Math.max(1,(max-min)))*(H-padB-padT);
-  const path=points.map((p,i)=>`${i===0?'M':'L'} ${padL+i*stepX} ${y(p.val)}`).join(' ');
-  const dots=points.map((p,i)=>`<circle cx="${padL+i*stepX}" cy="${y(p.val)}" r="3" fill="var(--accent,#18181B)"><title>${fmtDate(p.date,{short:true})}: ${Math.round(p.val)}kg</title></circle>`).join('');
-  const lastLabel=`<text x="${padL+(points.length-1)*stepX}" y="${y(points[points.length-1].val)-8}" font-size="10" fill="var(--accent,#18181B)" text-anchor="end" font-family="monospace">${Math.round(points[points.length-1].val)}kg</text>`;
+/* Graphique "Charge sur exercice clé" — CHARGE RÉELLE (kg), jamais de 1RM estimé, filtré sur
+   un combiné EXACT [exId (exercice+variante)] x [format séries×reps]. Les 3 cas (0 / 1 / >=2
+   points) sont gérés séparément comme demandé. */
+function renderKeyExerciseChart(exId, fmtKey){
+  if(!exId) return `<div class="empty-state" style="padding:24px 4px;"><div class="d">Aucun exercice de force enregistré.</div></div>`;
+  const formats=availableFormats(exId);
+  if(!formats.length) return `<div class="empty-state" style="padding:24px 4px;"><div class="d">Aucune donnée enregistrée pour ce format</div></div>`;
+  const fmt = formats.find(f=>f.key===fmtKey) || formats[0];
+  const points = exerciseFormatPoints(exId).filter(p=>p.setsCount===fmt.setsCount && p.repsCount===fmt.repsCount);
+
+  /* Cas 0 donnée */
+  if(!points.length){
+    return `<div class="empty-state" style="padding:24px 4px;"><div class="d">Aucune donnée enregistrée pour ce format</div></div>`;
+  }
+  /* Cas 1 seule donnée : point centré, date + poids affichés, message d'invitation */
+  if(points.length===1){
+    const p=points[0];
+    return `<div class="chart-wrap" style="min-height:150px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;">
+      <svg viewBox="0 0 40 40" width="40" height="40"><circle cx="20" cy="20" r="6" fill="var(--accent,#18181B)"/></svg>
+      <div class="mono" style="font-size:16px;font-weight:700;">${p.weight}kg</div>
+      <div style="font-size:11px;color:var(--text-dim);">${fmtDate(p.date,{short:true})}</div>
+      <div class="d" style="text-align:center;max-width:240px;font-size:12px;color:var(--text-faint);margin-top:2px;">Enregistre une autre séance dans ce format pour voir ton évolution</div>
+    </div>`;
+  }
+
+  /* Cas >=2 données : axes X/Y, grille discrète, dégradé sous la courbe */
+  const W=Math.max(340, points.length*54), H=180, padL=34, padR=14, padT=24, padB=26;
+  const weights=points.map(p=>p.weight);
+  const rawMin=Math.min(...weights), rawMax=Math.max(...weights);
+  const span=Math.max(1, rawMax-rawMin);
+  const min=Math.max(0, rawMin - span*0.15 - 2);
+  const max=rawMax + span*0.15 + 2;
+  const stepX=(W-padL-padR)/Math.max(1,points.length-1);
+  const x=i=>padL+i*stepX;
+  const y=v=>padT+(1-(v-min)/Math.max(1,(max-min)))*(H-padT-padB);
+
+  const gridLines=4;
+  let grid='', yLabels='';
+  for(let i=0;i<=gridLines;i++){
+    const v=min+(max-min)*(i/gridLines);
+    const yy=y(v);
+    grid+=`<line x1="${padL}" y1="${yy}" x2="${W-padR}" y2="${yy}" stroke="var(--border,#2a2a2e)" stroke-width="1" stroke-dasharray="3,3"/>`;
+    yLabels+=`<text x="${padL-6}" y="${yy+3}" font-size="9" fill="var(--text-faint,#71717A)" text-anchor="end">${Math.round(v)}</text>`;
+  }
+  const showEvery=Math.max(1,Math.ceil(points.length/8));
+  const xLabels=points.map((p,i)=> (i%showEvery===0||i===points.length-1) ? `<text x="${x(i)}" y="${H-6}" font-size="9" fill="var(--text-faint,#71717A)" text-anchor="middle">${fmtDate(p.date,{short:true})}</text>` : '').join('');
+
+  const linePath=points.map((p,i)=>`${i===0?'M':'L'} ${x(i)} ${y(p.weight)}`).join(' ');
+  const areaPath=`${linePath} L ${x(points.length-1)} ${H-padB} L ${x(0)} ${H-padB} Z`;
+  const gradId='gradKeyEx_'+exId.replace(/[^a-zA-Z0-9]/g,'')+'_'+fmt.setsCount+'x'+fmt.repsCount;
+
+  /* Chaque point est cliquable/tapable (r=6, cible large sur mobile) et révèle SON poids —
+     pas seulement le dernier point comme avant. Le clic masque les autres labels affichés
+     (querySelectorAll scopé au <svg> courant) et affiche celui du point touché. Le dernier
+     point garde son label visible par défaut pour un aperçu immédiat. */
+  const pointGroups=points.map((p,i)=>{
+    const cx=x(i), cy=y(p.weight);
+    const labelY=Math.max(11, cy-10);
+    const anchor = i===0 ? 'start' : (i===points.length-1 ? 'end' : 'middle');
+    const labelX = i===0 ? cx : (i===points.length-1 ? cx : cx);
+    const isLast=i===points.length-1;
+    return `<g>
+      <circle cx="${cx}" cy="${cy}" r="6" fill="var(--accent,#18181B)" style="cursor:pointer;" onclick="var s=this.closest('svg'); s.querySelectorAll('.kx-label').forEach(function(t){t.style.opacity='0';}); this.nextElementSibling.style.opacity='1';">
+        <title>${fmtDate(p.date,{short:true})}: ${p.weight}kg</title>
+      </circle>
+      <text class="kx-label" x="${labelX}" y="${labelY}" font-size="10" font-weight="700" fill="var(--accent,#18181B)" text-anchor="${anchor}" font-family="monospace" style="opacity:${isLast?1:0};pointer-events:none;">${p.weight}kg</text>
+    </g>`;
+  }).join('');
+
   return `<div class="chart-wrap"><svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" style="min-width:${W}px;">
-    <path d="${path}" fill="none" stroke="var(--accent,#18181B)" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>
-    ${dots}${lastLabel}
+    <defs><linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="var(--accent,#18181B)" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="var(--accent,#18181B)" stop-opacity="0"/>
+    </linearGradient></defs>
+    ${grid}${yLabels}
+    <path d="${areaPath}" fill="url(#${gradId})" stroke="none"/>
+    <path d="${linePath}" fill="none" stroke="var(--accent,#18181B)" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>
+    <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${H-padB}" stroke="var(--border,#3a3a3e)" stroke-width="1"/>
+    ${xLabels}
+    ${pointGroups}
   </svg></div>`;
 }
 
-/* ---- Records ---- */
+/* ---- Records ----
+   NOTE : computeAllPRs()/trackingExId() restent INCHANGÉS et continuent d'alimenter le dashboard
+   (renderRecentPRs) et le moteur de suggestion — on ne casse rien de ce qui en dépend déjà.
+   La logique ci-dessous (computePRsByReps + renderPRs) est la nouvelle logique de la page Records,
+   séparée et propre à cette page. */
+
+/* Catégories d'affichage des records — directement dérivées de la catégorie réelle de l'exercice
+   (exerciseCategory(), le même champ ex.category choisi à la création/édition de l'exercice).
+   "Épaules & Santé / Préhab" est une vraie catégorie d'exercice (DB.categories) au même
+   titre que Push/Pull/Legs/Abdos-Core : pour qu'un exercice y apparaisse, il suffit de la choisir
+   dans le formulaire d'exercice, aucune heuristique de mots-clés n'est utilisée ici. */
+const PR_CATEGORY_ORDER = ['PUSH','PULL','LEGS','ÉPAULES & SANTÉ / PRÉHAB','ABS / CORE'];
+function prCategoryOf(ex){
+  if(!ex) return 'PUSH';
+  const cat=exerciseCategory(ex);
+  if(cat==='Push') return 'PUSH';
+  if(cat==='Pull') return 'PULL';
+  if(cat==='Legs') return 'LEGS';
+  if(cat==='Abdos / Core') return 'ABS / CORE';
+  if(cat==='Épaules & Santé / Préhab') return 'ÉPAULES & SANTÉ / PRÉHAB';
+  return 'PUSH'; // repli pour Endurance/Sports, rarement concerné par les records de charge
+}
+/* Records par [exId EXACT (exercice + variante précise)] x [nombre de reps] : la charge réelle
+   maximale soulevée pour ce nombre de reps, TOUS nombres de séries confondus (1x5 à 100kg et
+   5x5 à 100kg comptent bien pour le même record "Best 5 reps"). Filtré par profileId : les
+   records de chaque personne restent strictement séparés (une séance sans profileId explicite
+   retombe sur sessionProfileId(), jamais mélangée à l'aveugle). */
+function computePRsByReps(profileId){
+  const prs={};
+  DB.sessions.filter(s=>s.status==='done' && (!profileId || sessionProfileId(s)===profileId)).forEach(s=>{
+    (s.entries||[]).forEach(ex=>{
+      (ex.sets||[]).forEach(st=>{
+        if(!st.done) return;
+        const w=Number(st.weight)||0, r=Number(st.reps)||0;
+        if(w<=0||r<=0) return;
+        if(!prs[ex.exId]) prs[ex.exId]={};
+        const cur=prs[ex.exId][r];
+        if(!cur || w>cur.weight || (w===cur.weight && s.date>cur.date)) prs[ex.exId][r]={weight:w,date:s.date};
+      });
+    });
+  });
+  return prs;
+}
+/* Rend les cartes de records groupées par catégorie PUSH/PULL/LEGS/ÉPAULES & SANTÉ/PRÉHAB/ABS-CORE,
+   chaque exercice affichant tous ses "Best X reps" enregistrés, pour UN profil donné. */
+function renderPRs(profileId){
+  const prs=computePRsByReps(profileId);
+  const exIds=Object.keys(prs).filter(id=>getExercise(id));
+  if(!exIds.length) return `<div class="card empty-state"><div class="t">Aucun record</div><div class="d">Valide des séries en séance pour générer automatiquement tes records.</div></div>`;
+  const byCat={};
+  exIds.forEach(exId=>{ const cat=prCategoryOf(getExercise(exId)); (byCat[cat]=byCat[cat]||[]).push(exId); });
+  return PR_CATEGORY_ORDER.filter(cat=>byCat[cat]&&byCat[cat].length).map(cat=>{
+    const ids=byCat[cat].sort((a,b)=>exerciseDisplayName(getExercise(a)).localeCompare(exerciseDisplayName(getExercise(b)),'fr'));
+    return `<div class="section-title" style="margin-top:16px;">${cat}</div>
+    <div class="card">${ids.map(exId=>{
+      const ex=getExercise(exId); const sport=getSport(ex.sportId);
+      const reps=Object.entries(prs[exId]).map(([r,d])=>({reps:Number(r),weight:d.weight,date:d.date})).sort((a,b)=>a.reps-b.reps);
+      return `<div class="list-item" style="align-items:flex-start;">
+      <div class="swatch" style="background:${sport?.color||'#888'}"></div>
+      <div class="main">
+        <div class="title">${exerciseDisplayName(ex)}</div>
+        <div class="meta" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;">${reps.map(r=>`<span class="chip" style="font-size:11px;">Best ${r.reps} reps : <b>${r.weight}kg</b> · ${fmtDate(r.date,{short:true})}</span>`).join('')}</div>
+      </div></div>`;
+    }).join('')}</div>`;
+  }).join('');
+}
 function renderRecordsTab(){
-  const prs=computeAllPRs();
-  const rows=Object.values(prs).sort((a,b)=>(getExercise(a.exId)?.name||'').localeCompare(getExercise(b.exId)?.name||''));
-  if(!rows.length) return `<div class="card empty-state"><div class="t">Aucun record</div><div class="d">Valide des séries en séance pour générer automatiquement tes 1RM et records.</div></div>`;
-  return `<div class="card">${rows.map(p=>{
-    const ex=getExercise(p.exId); const sport=getSport(ex?.sportId);
-    return `<div class="list-item"><div class="swatch" style="background:${sport?.color||'#888'}"></div>
-    <div class="main"><div class="title">${ex?.name||'?'}</div><div class="meta">PR: ${p.weight}kg × ${p.reps} reps — ${fmtDate(p.date,{short:true})}</div></div>
-    <div class="trail" style="color:var(--accent)">1RM<br>~${Math.round(p.e1rm)}kg</div></div>`;
-  }).join('')}</div>`;
+  const selectedProfileId = CURRENT_PROFILE_ID;
+  const goals=(DB.goals||[]).filter(g=>!g.achieved);
+  const goalsHTML = goals.length ? `<div class="section-title" style="margin-top:0;">Objectifs en cours</div>
+    <div class="card">${goals.map(g=>{
+      const ex=getExercise(g.exId);
+      return `<div style="margin-bottom:12px;"><div style="font-size:13px;font-weight:700;margin-bottom:4px;">${ex?ex.name:'?'}</div>${goalBarHTML(g)}</div>`;
+    }).join('')}</div>` : '';
+  return goalsHTML+renderPRs(selectedProfileId);
 }
 
 /* ---- Bilan de bloc ---- */
@@ -2385,7 +3236,10 @@ function weightLineChart(bw){
    ============================================================ */
 function bindStatsEvents(){
   $$('[data-stab]').forEach(b=>b.addEventListener('click',()=>{STATS_TAB=b.dataset.stab;render();}));
-  const exSel=$('#stat-ex-select'); if(exSel) exSel.addEventListener('change',()=>{STATS_SELECTED_EX=exSel.value;render();});
+  const exSel=$('#stat-ex-select'); if(exSel) exSel.addEventListener('change',()=>{STATS_SELECTED_EX=exSel.value;STATS_SELECTED_FORMAT=null;render();}); // change d'exercice racine -> repart sur "Normal"
+  const varSel=$('#stat-variant-select'); if(varSel) varSel.addEventListener('change',()=>{STATS_SELECTED_EX=varSel.value;STATS_SELECTED_FORMAT=null;render();});
+  const fmtSel=$('#stat-format-select'); if(fmtSel) fmtSel.addEventListener('change',()=>{STATS_SELECTED_FORMAT=fmtSel.value;render();});
+  const recProfSel=$('#records-profile-select'); if(recProfSel) recProfSel.addEventListener('change',()=>{STATS_RECORDS_PROFILE_ID=recProfSel.value;render();});
   const bilanSel=$('#bilan-select'); if(bilanSel) bilanSel.addEventListener('change',()=>{BILAN_BLOCK_ID=bilanSel.value;render();});
 
   const bwAdd=$('#bw-add');
@@ -2437,6 +3291,33 @@ function renderSettings(){
   </div>
   <button class="btn btn-primary" id="save-settings" style="margin-bottom:22px;">Enregistrer les préférences</button>
 
+  <div class="section-title">Profil</div>
+  <div class="card">
+    <div style="font-size:12.5px;color:var(--text-dim);margin-bottom:10px;">Chaque profil a son propre espace 100% isolé sur cet appareil : routines, séances, blocs, objectifs et historique de perfs d'un profil ne sont jamais visibles depuis un autre.</div>
+    <div class="list-item" style="margin-bottom:10px;">
+      <div class="swatch" style="background:var(--accent)"></div>
+      <div class="main"><input id="profile-name-input" value="${(profileName(CURRENT_PROFILE_ID)||'').replace(/"/g,'&quot;')}" style="border:none;background:none;padding:2px 0;font-weight:700;font-size:14px;"></div>
+    </div>
+    <button class="btn btn-secondary" id="switch-profile-btn" style="margin-bottom:10px;">🔒 Changer de profil</button>
+    <button class="btn btn-danger" id="delete-profile-btn">Supprimer ce profil et toutes ses données</button>
+  </div>
+
+  <div class="section-title">Catégories d'exercices</div>
+  <div class="card">
+    <div style="font-size:12.5px;color:var(--text-dim);margin-bottom:10px;">Utilisées pour classer et filtrer les exercices (onglets Push/Pull/Legs...). Renommer une catégorie met à jour tous les exercices qui l'utilisent.</div>
+    <div id="categories-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px;">
+      ${(DB.categories||DEFAULT_CATEGORIES).map(c=>{
+        const count=DB.exercises.filter(e=>!e.variantOf && exerciseCategory(e)===c).length;
+        return `<div class="list-item">
+        <div class="main"><input class="category-name-input" data-category="${c.replace(/"/g,'&quot;')}" value="${c.replace(/"/g,'&quot;')}" style="border:none;background:none;padding:2px 0;font-weight:700;font-size:14px;width:100%;"></div>
+        <span style="font-size:11px;color:var(--text-faint);flex:0 0 auto;">${count} exo${count>1?'s':''}</span>
+        <button class="icon-btn" data-del-category="${c.replace(/"/g,'&quot;')}" style="width:32px;height:32px;"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m2 0v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V6"/></svg></button>
+      </div>`;
+      }).join('')}
+    </div>
+    <div class="row"><input id="new-category-input" placeholder="Ex: Cardio, Mobilité..." style="flex:1;"><button type="button" class="btn btn-secondary btn-sm" id="add-category-btn" style="flex:0 0 auto;">Ajouter</button></div>
+  </div>
+
   <div class="section-title">Muscles principaux</div>
   <div class="card">
     <div style="font-size:12.5px;color:var(--text-dim);margin-bottom:10px;">Liste utilisée pour le "Muscle principal" à la création d'un exercice. Ajoute ou retire des muscles selon tes besoins.</div>
@@ -2473,6 +3354,24 @@ function renderSettings(){
   `;
 }
 function bindSettingsEvents(){
+  $('#profile-name-input').addEventListener('change',(e)=>{
+    const p=getProfile(CURRENT_PROFILE_ID); if(!p) return;
+    const name=e.target.value.trim(); if(!name){ e.target.value=p.name; return; }
+    p.name=name; saveDB(); toast('Profil renommé');
+  });
+  $('#switch-profile-btn').addEventListener('click',()=>{ logout(); });
+  $('#delete-profile-btn').addEventListener('click',()=>{
+    if((GLOBAL.profiles||[]).length<=1){ toast('Il doit rester au moins un profil'); return; }
+    if(!confirm('Supprimer définitivement le profil "'+profileName(CURRENT_PROFILE_ID)+'" et TOUTES ses données (routines, séances, blocs, objectifs, historique) ? Cette action est irréversible.'))return;
+    if(!confirm('Es-tu vraiment sûr ? Aucune sauvegarde ne sera conservée.'))return;
+    const idToDelete=CURRENT_PROFILE_ID;
+    localStorage.removeItem(profileStorageKey(idToDelete));
+    GLOBAL.profiles=(GLOBAL.profiles||[]).filter(p=>p.id!==idToDelete);
+    saveGlobal();
+    CURRENT_PROFILE_ID=null; DB=null;
+    toast('Profil supprimé');
+    showLockscreen();
+  });
   $('#save-settings').addEventListener('click',()=>{
     Object.assign(DB.settings,{
       goalProtein:+$('#set-protein').value||0, goalCarbs:+$('#set-carbs').value||0, goalFat:+$('#set-fat').value||0, goalWater:+$('#set-water').value||0,
@@ -2480,6 +3379,39 @@ function bindSettingsEvents(){
     });
     saveDB(); toast('Préférences enregistrées');
   });
+  if(!DB.categories) DB.categories=[...DEFAULT_CATEGORIES];
+  $('#add-category-btn').addEventListener('click',()=>{
+    const input=$('#new-category-input'); const name=input.value.trim();
+    if(!name){return;}
+    if(DB.categories.some(c=>c.toLowerCase()===name.toLowerCase())){ toast('Cette catégorie existe déjà'); return; }
+    DB.categories.push(name); saveDB(); input.value=''; render();
+  });
+  $('#new-category-input').addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); $('#add-category-btn').click(); } });
+  $$('.category-name-input').forEach(inp=>inp.addEventListener('change',()=>{
+    const oldName=inp.dataset.category;
+    const newName=inp.value.trim();
+    if(!newName){ inp.value=oldName; return; }
+    if(newName===oldName) return;
+    if(DB.categories.some(c=>c.toLowerCase()===newName.toLowerCase())){ toast('Cette catégorie existe déjà'); inp.value=oldName; return; }
+    /* Renommer met à jour la catégorie elle-même ET tous les exercices qui la référencent,
+       pour qu'aucun exercice ne se retrouve orphelin d'une catégorie qui n'existe plus. */
+    DB.categories=DB.categories.map(c=>c===oldName?newName:c);
+    DB.exercises.forEach(e=>{ if(e.category===oldName) e.category=newName; });
+    saveDB(); toast('Catégorie renommée'); render();
+  }));
+  $$('[data-del-category]').forEach(b=>b.addEventListener('click',()=>{
+    const name=b.dataset.delCategory;
+    const count=DB.exercises.filter(e=>!e.variantOf && exerciseCategory(e)===name).length;
+    if(DB.categories.length<=1){ toast('Il doit rester au moins une catégorie'); return; }
+    const msg=count>0
+      ? `${count} exercice(s) utilisent "${name}". Les supprimer les laissera sans catégorie (ils retomberont sur la 1ère catégorie disponible). Continuer ?`
+      : `Supprimer la catégorie "${name}" ?`;
+    if(!confirm(msg))return;
+    DB.categories=DB.categories.filter(c=>c!==name);
+    const fallback=DB.categories[0];
+    DB.exercises.forEach(e=>{ if(e.category===name) e.category=fallback; });
+    saveDB(); toast('Catégorie supprimée'); render();
+  }));
   if(!DB.muscles) DB.muscles=[...DEFAULT_MUSCLE_LIST];
   $('#add-muscle-btn').addEventListener('click',()=>{
     const input=$('#new-muscle-input'); const name=input.value.trim();
@@ -2527,8 +3459,13 @@ function bindSettingsEvents(){
     reader.onload=()=>{
       try{
         const data=JSON.parse(reader.result);
-        if(!confirm('Importer remplacera toutes les données actuelles. Continuer ?'))return;
-        DB=Object.assign(defaultDB(),data); saveDB(); toast('Import réussi'); render();
+        if(!confirm('Importer remplacera toutes les données du profil actif ('+profileName(CURRENT_PROFILE_ID)+'). Continuer ?'))return;
+        const pd=Object.assign(defaultProfileData(),data);
+        pd.settings=Object.assign(defaultProfileData().settings, data.settings||{});
+        DB.blocks=pd.blocks; DB.routines=pd.routines; DB.sessions=pd.sessions; DB.bodylog=pd.bodylog;
+        DB.nutrilog=pd.nutrilog; DB.injuries=pd.injuries; DB.goals=pd.goals; DB.settings=pd.settings;
+        DB.settings.activeProfileId=CURRENT_PROFILE_ID;
+        saveDB(); toast('Import réussi'); render();
       }catch(err){ toast('Fichier invalide'); }
     };
     reader.readAsText(file);
@@ -2536,7 +3473,11 @@ function bindSettingsEvents(){
   $('#reset-data').addEventListener('click',()=>{
     if(!confirm('Cette action supprimera définitivement toutes tes données. Continuer ?'))return;
     if(!confirm('Es-tu vraiment sûr ? Aucune sauvegarde ne sera conservée.'))return;
-    DB=defaultDB(); saveDB(); toast('Données réinitialisées'); navigate('dashboard');
+    const pd=defaultProfileData();
+    DB.blocks=pd.blocks; DB.routines=pd.routines; DB.sessions=pd.sessions; DB.bodylog=pd.bodylog;
+    DB.nutrilog=pd.nutrilog; DB.injuries=pd.injuries; DB.goals=pd.goals; DB.settings=pd.settings;
+    DB.settings.activeProfileId=CURRENT_PROFILE_ID;
+    saveDB(); toast('Données réinitialisées'); navigate('dashboard');
   });
   const installBtn=$('#pwa-install');
   if(DEFERRED_PROMPT){ installBtn.style.display='block'; installBtn.addEventListener('click',async()=>{ DEFERRED_PROMPT.prompt(); await DEFERRED_PROMPT.userChoice; DEFERRED_PROMPT=null; installBtn.style.display='none'; }); }
@@ -2580,7 +3521,9 @@ window.addEventListener('beforeinstallprompt',(e)=>{ e.preventDefault(); DEFERRE
 $('#btn-notif').addEventListener('click',()=>{ CAL_ANCHOR=todayISO(); if(ROUTE!=='dashboard') navigate('dashboard'); else renderCalendar(); });
 
 /* ---------- Init ---------- */
-navigate('dashboard');
+migrateLegacyIfNeeded();
+GLOBAL=loadGlobal();
+showLockscreen();
 
 </script>
 </body>
