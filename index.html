@@ -286,6 +286,9 @@ main#views{padding:16px 16px 24px;}
 .set-row td:first-child{color:var(--text-dim);font-size:13px;font-weight:600;text-align:left;padding-left:2px;}
 .set-row input{padding:9px 4px;text-align:center;font-size:14px;font-weight:600;}
 .prev-hint{font-size:9px;color:var(--text-faint);text-align:center;margin-top:3px;white-space:nowrap;}
+.helper-text{font-size:11.5px;color:var(--text-faint);margin-bottom:10px;line-height:1.4;}
+.helper-text strong{color:var(--text-dim);font-weight:700;}
+.helper-text button{background:none;border:none;color:var(--accent);font-weight:700;margin-left:4px;text-decoration:underline;cursor:pointer;font-size:inherit;padding:0;}
 .set-row .check{width:34px;height:34px;border-radius:9px;border:1px solid var(--border-strong);background:var(--surface);display:flex;align-items:center;justify-content:center;margin:0 auto;}
 .set-row.done .check{background:var(--accent);border-color:var(--accent);color:#fff;}
 .set-row.done input{border-color:var(--accent);}
@@ -913,6 +916,9 @@ let CAL_ANCHOR=todayISO();
 let STATS_TAB='progression';
 let PROG_TAB='blocks';
 let EX_SPORT_OPEN={};
+let EX_LIB_TAB={};
+let EX_LIB_SEARCH={};
+let EX_VARIANTS_OPEN={};
 
 function closeAllModals(){
   while(MODAL_STACK.length){
@@ -950,6 +956,11 @@ $$('.navbtn').forEach(b=>b.addEventListener('click',()=>navigate(b.dataset.view)
 
 function render(){
   const main=$('#views');
+  /* Préserve la position de scroll d'un render() à l'autre : sauver/supprimer/ajouter un élément
+     (routine, exercice, série...) ne doit pas ramener l'utilisateur en haut de page — seul un
+     changement d'onglet volontaire via navigate() doit le faire (navigate remet scrollTop à 0
+     explicitement juste après avoir appelé render()). */
+  const savedScroll = main.scrollTop;
   const titles={dashboard:['MuscoPlan','Ton centre de contrôle'],session:['Séance en cours','Suivi live'],programs:['Programmes','Blocs, routines & exercices'],stats:['Statistiques','Progrès & records'],settings:['Réglages','Données & préférences']};
   $('#topbar-title').textContent = titles[ROUTE][0];
   $('#topbar-sub').textContent = titles[ROUTE][1];
@@ -960,6 +971,7 @@ function render(){
   else if(ROUTE==='stats') main.innerHTML=renderStats();
   else if(ROUTE==='settings') main.innerHTML=renderSettings();
   bindViewEvents();
+  main.scrollTop = savedScroll;
 }
 function updateSessionNavDot(){
   const hasActive = ACTIVE_SESSION_ID || DB.sessions.some(s=>s.date===todayISO() && s.status==='planned');
@@ -1113,77 +1125,91 @@ function exerciseHistory(exId,beforeDate,profileId){
   return out;
 }
 /* ============================================================
-   MOTEUR DE SUGGESTION INTELLIGENTE (Charge x RPE x Volume)
-   Calcule la suggestion pour le couple [Profil + Exercice/Variante], sur la base de la
-   DERNIÈRE séance validée pour CE profil, en ajouts/retraits fixes en kg (jamais de %).
+   MOTEUR DE CONSEIL DE CHARGE (Charge x RPE x Incrément personnalisé)
+   getWeightAdvice() est un PUR CONSEIL — il ne touche jamais la valeur d'un champ, il ne
+   fait que calculer un chiffre et un message à afficher en placeholder / texte d'aide.
+   Reçoit un lastLog déjà extrait de l'historique : {weight, repsDone:[...], rpe, date}.
 
-   Règle de sécurité (prioritaire) : une hausse de charge n'est proposée QUE SI le nombre
-   minimal de reps de l'objectif a été atteint sur TOUTES les séries de la séance précédente.
-   Sinon on maintient (ou on baisse si l'échec est sévère), quel qu'ait été le RPE.
+   Grille de décision (arrondie à 2 décimales) :
+     RPE non renseigné      → conserve lastWeight, invite à noter un RPE
+     RPE ≤ 5                → +2×incrément (poly) ou +incrément (isolation) : effort très facile
+     5 < RPE ≤ 7.5          → +incrément SI le haut de la fourchette (ou le nombre fixe) est
+                               atteint sur toutes les séries, sinon on conserve et vise le haut
+     7.5 < RPE ≤ 8.5        → zone cible idéale, on conserve et on progresse sur les reps
+     8.5 < RPE < 9.5        → effort intense, on conserve
+     RPE ≥ 9.5 (ou échec)   → si le bas de la fourchette a été tenu sur toutes les séries,
+                               on conserve ; sinon on retire un incrément
+   NB: les bornes 5-6, 7.5-8 et 9.4-9.5 du barème d'origine sont fusionnées avec la zone
+   voisine la plus proche pour que chaque RPE possible tombe dans une seule règle continue. */
+function getWeightAdvice(lastLog, exercise, targetReps){
+  if(!lastLog || !lastLog.weight) return null;
+  const lastWeight=Number(lastLog.weight)||0;
+  if(!lastWeight) return null;
+  const poly=isPolyarticular(exercise);
+  const weightIncrement = (exercise && exercise.weightIncrement!=null && exercise.weightIncrement>0) ? Number(exercise.weightIncrement) : (poly?2.5:1);
+  const repRange = parseRepRange(targetReps) || ((exercise&&exercise.minReps&&exercise.maxReps)?{min:+exercise.minReps,max:+exercise.maxReps}:null);
+  const repsDone = lastLog.repsDone||[];
+  const rpe = (lastLog.rpe===null||lastLog.rpe===undefined||isNaN(Number(lastLog.rpe))) ? null : Number(lastLog.rpe);
+  const round=n=>Math.round(n*100)/100;
 
-   Sinon, grille d'ajustement selon le RPE moyen de la dernière séance validée :
-     RPE ≤ 5            → forte hausse (+5kg poly / +1 à +2.5kg iso)
-     5 < RPE ≤ 7.5       → hausse modérée SI le haut de la fourchette est atteint partout
-                            (+2.5kg poly / +1kg iso), sinon on vise d'abord le haut des reps
-     8 ≤ RPE < 9.5        → zone cible idéale, on maintient et on vise le haut des reps
-     RPE ≥ 9.5             → effort maximal, on maintient (le volume est déjà validé ici)
-     Pas de RPE renseigné → on ne peut pas affiner, message dédié
-*/
+  let suggested=lastWeight, message='';
+  if(rpe===null){
+    message=`Poids précédent : ${lastWeight} kg — RPE non renseigné.`;
+  } else if(rpe<=5){
+    const inc = poly ? 2*weightIncrement : weightIncrement;
+    suggested = round(lastWeight+inc);
+    message=`Effort très facile (RPE ${rpe.toFixed(1)}) — Suggestion : ${suggested} kg (+${inc}kg)`;
+  } else if(rpe<=7.5){
+    const highReached = repRange ? (repsDone.length>0 && repsDone.every(r=>r>=repRange.max)) : false;
+    if(highReached){
+      suggested = round(lastWeight+weightIncrement);
+      message=`Max de reps atteint avec de la marge ! Suggestion : ${suggested} kg (+${weightIncrement}kg)`;
+    } else {
+      suggested = lastWeight;
+      const targetLabel = repRange ? `${repRange.max} reps` : 'le haut de la fourchette';
+      message=`Marge disponible (RPE ${rpe.toFixed(1)}). Conserve ${lastWeight} kg et vise ${targetLabel} avant d'augmenter.`;
+    }
+  } else if(rpe<=8.5){
+    suggested = lastWeight;
+    message=`Zone cible idéale. Conserve ${lastWeight} kg et progresse en répétitions.`;
+  } else if(rpe<9.5){
+    suggested = lastWeight;
+    message=`Effort intense (RPE ${rpe.toFixed(1)}). Conserve ${lastWeight} kg pour la prochaine séance.`;
+  } else {
+    const volumeValidated = repRange ? (repsDone.length>0 && repsDone.every(r=>r>=repRange.min)) : true;
+    if(volumeValidated){
+      suggested = lastWeight;
+      message=`Effort max mais volume validé — Conserve ${lastWeight} kg.`;
+    } else {
+      suggested = round(Math.max(0, lastWeight-weightIncrement));
+      message=`Volume non tenu — Suggestion de réduction : ${suggested} kg (-${weightIncrement}kg)`;
+    }
+  }
+  return {suggested,message,lastWeight};
+}
+/* Adapte getWeightAdvice() à l'historique réel stocké dans DB.sessions pour un exercice donné :
+   reconstruit le lastLog (poids max validé, reps de chaque série, RPE moyen des séries) à partir
+   de la dernière séance validée du profil, puis délègue tout le calcul à getWeightAdvice(). */
 function progressionSuggestion(exId, profileId, currentTargetReps){
   const hist=exerciseHistory(exId,null,profileId);
   if(!hist.length || !hist[0].sets.length) return null;
   const last=hist[0];
   const weights=last.sets.map(s=>Number(s.weight)||0).filter(w=>w>0);
   if(!weights.length) return null;
-  const topWeight=Math.max(...weights);
+  const lastWeight=Math.max(...weights);
   const exDef=getExercise(exId);
-  const poly=isPolyarticular(exDef);
-  const repRange=parseRepRange(currentTargetReps||last.targetReps);
+  const repsDone=last.sets.map(st=>Number(st.reps)||0);
   const rpes=last.sets.map(s=>Number(s.rpe)).filter(r=>r>0);
-  const avgRpe=rpes.length?rpes.reduce((a,b)=>a+b,0)/rpes.length:null;
-  const round5=n=>Math.round(n*2)/2;
-  const bigInc = poly ? 5 : (topWeight<=20?1:2.5);
-  const smallInc = poly ? 2.5 : 1;
-  const reduceInc = poly ? 5 : 2.5;
-
-  let volumeValidated=true, severeFail=false, highReached=false;
-  if(repRange){
-    const repsAchieved=last.sets.map(st=>Number(st.reps)||0);
-    volumeValidated = repsAchieved.every(r=>r>=repRange.min);
-    highReached = repsAchieved.every(r=>r>=repRange.max);
-    if(!volumeValidated){
-      const worst=Math.min(...repsAchieved);
-      severeFail = worst<=0 || worst<=(repRange.min-3);
-    }
-  }
-
-  let suggested=topWeight, note='';
-  if(repRange && !volumeValidated){
-    if(severeFail){
-      suggested=round5(topWeight-reduceInc);
-      note=`Volume non tenu (objectif ${repRange.min}+ reps) — baisse de -${reduceInc}kg`;
-    } else {
-      suggested=topWeight;
-      note=`Objectif de ${repRange.min}+ reps non atteint sur toutes les séries — maintien de la charge`;
-    }
-  } else if(avgRpe===null){
-    note='Ajoute un RPE pour affiner la suggestion';
-  } else if(avgRpe<=5){
-    suggested=round5(topWeight+bigInc);
-    note=`Effort très facile (RPE ${avgRpe.toFixed(1)}) — augmentation recommandée de +${bigInc}kg`;
-  } else if(avgRpe<=7.5){
-    if(repRange && highReached){
-      suggested=round5(topWeight+smallInc);
-      note=`Haut de la fourchette atteint (RPE ${avgRpe.toFixed(1)}) — augmentation de +${smallInc}kg`;
-    } else {
-      note='Marge dispo, vise le haut de la fourchette de reps avant d\'augmenter la charge';
-    }
-  } else if(avgRpe<9.5){
-    note=`Zone cible idéale (RPE ${avgRpe.toFixed(1)}) — maintiens la charge, vise le haut de la fourchette de reps`;
-  } else {
-    note=`Effort maximal (RPE ${avgRpe.toFixed(1)}) — maintien de la charge`;
-  }
-  return {suggested,note,lastDate:last.date,lastWeight:topWeight};
+  const rpe=rpes.length?rpes.reduce((a,b)=>a+b,0)/rpes.length:null;
+  const advice=getWeightAdvice({weight:lastWeight,repsDone,rpe,date:last.date}, exDef, currentTargetReps||last.targetReps);
+  if(!advice) return null;
+  return {suggested:advice.suggested, note:advice.message, lastDate:last.date, lastWeight};
+}
+/* Alias public au nom demandé dans le cahier des charges : mêmes calculs que
+   progressionSuggestion(), avec profileId optionnel (défaut : profil actif).
+   C'est cette fonction que la Semaine type / génération de séances appelle. */
+function getRecommendedWeight(exerciseId, profileId, currentTargetReps){
+  return progressionSuggestion(exerciseId, profileId!==undefined?profileId:CURRENT_PROFILE_ID, currentTargetReps);
 }
 /* Volume total (poids x reps) d'une séance pour un exercice, et volume effectivement validé (sets done) */
 function entryVolume(entry,onlyDone){
@@ -1289,52 +1315,12 @@ function openGoalModal(rootExId){
 }
 
 /* ============================================================
-   SURCHARGE PROGRESSIVE AUTOMATIQUE (par bloc)
-   Principe : dans un bloc, chaque routine (ex: "PULL 1") revient chaque
-   semaine. La toute première occurrence VALIDÉE ("Faite") de cette routine
-   dans le bloc sert de référence (= semaine 1). Pour chaque occurrence
-   ultérieure de la même routine dans le même bloc, on calcule le nombre
-   de semaines écoulées depuis cette référence et on ajoute (mode "fixed")
-   ou compose (mode "percent") l'incrément réglé sur le bloc — appliqué au
-   poids RÉELLEMENT enregistré en semaine 1, pas à une estimation.
-   Recalculé à chaque ouverture de séance : dès que la semaine de référence
-   est validée, les semaines suivantes se mettent à jour automatiquement. */
-function blockChainWeight(block, routineId, sessionDate, exId, setIndex){
-  const ap=block.autoProgression;
-  if(!ap || !ap.enabled) return null;
-  const priorDone=DB.sessions
-    .filter(x=>x.blockId===block.id && x.routineId===routineId && x.status==='done' && x.date<sessionDate)
-    .sort((a,b)=>a.date.localeCompare(b.date));
-  if(!priorDone.length) return null;
-  const reference=priorDone[0]; // 1ère occurrence validée de cette routine dans le bloc = semaine de référence
-  const refEntry=(reference.entries||[]).find(e=>e.exId===exId); if(!refEntry) return null;
-  const refSet=(refEntry.sets||[])[setIndex]; const refWeight=Number(refSet&&refSet.weight)||0;
-  if(refWeight<=0) return null;
-  const weekIdx=isoWeeksBetween(startOfWeek(reference.date),startOfWeek(sessionDate));
-  if(weekIdx<=0) return null;
-  const target = ap.mode==='percent'
-    ? Math.round(refWeight*Math.pow(1+(ap.value||0)/100,weekIdx)*2)/2
-    : Math.round((refWeight+(ap.value||0)*weekIdx)*2)/2;
-  return {target, refWeight, refDate:reference.date, weekIdx};
-}
-/* Pré-remplit automatiquement (si le champ est encore vide) le poids des séances
-   planifiées d'un bloc avec la charge calculée par blockChainWeight(). Appelé à
-   chaque ouverture de la vue Séance : la valeur se met donc à jour dès qu'une
-   nouvelle référence est validée, sans action manuelle. */
-function applyBlockProgression(s){
-  if(!s || s.status!=='planned' || !s.blockId || !s.routineId) return;
-  const block=getBlock(s.blockId);
-  if(!block || !block.autoProgression || !block.autoProgression.enabled) return;
-  let changed=false;
-  (s.entries||[]).forEach(ex=>{
-    (ex.sets||[]).forEach((st,si)=>{
-      if(st.done || (st.weight && !st.autoFilled)) return; // on ne touche jamais une série validée ou un poids saisi à la main
-      const r=blockChainWeight(block, s.routineId, s.date, ex.exId, si);
-      if(r){ st.weight=String(r.target); st.autoFilled=true; changed=true; }
-    });
-  });
-  if(changed) saveDB();
-}
+   CONSEIL DE CHARGE — toujours affiché, jamais imposé
+   Dès qu'un exercice a un historique, son conseil (placeholder + texte d'aide gris sous le
+   champ, voir strengthExCardHTML) est calculé automatiquement à chaque ouverture de séance.
+   Il n'existe aucune fonction qui écrit une valeur dans les inputs à la place de l'utilisateur :
+   la charge suggérée est purement indicative, pour n'importe quelle séance (bloc ou libre).
+   ============================================================ */
 
 /* ============================================================
    CALENDRIER (mois / semaine, drag & drop)
@@ -1520,25 +1506,19 @@ function buildEntriesFromRoutine(routineId, beforeDate, profileId){
   if(sport.type==='strength' || sport.type==='mixed'){
     return (r.items||[]).map(it=>{
       const nSets=it.targetSets||3;
-      const hist=exerciseHistory(it.exerciseId, beforeDate, profileId)[0];
-      const targetRepsNum=(String(it.targetReps||'').match(/\d+/)||[])[0]||'';
       return {
         exId:it.exerciseId,
         targetSets:nSets,
         targetReps:it.targetReps||'',
-        sets:Array.from({length:nSets}).map((_,si)=>{
-          const prevSet=hist && hist.sets[si];
-          return {
-            /* 1ère séance du bloc (pas d'historique) : poids vide (placeholder 0), reps cibles pré-remplies.
-               Séances suivantes : poids ET reps pré-remplis avec la dernière performance réelle validée,
-               pour ajuster immédiatement la surcharge progressive. autoFilled=true signale que ce n'est
-               pas une saisie manuelle : applyBlockProgression() pourra encore l'écraser avec la charge
-               calculée par la chaîne de progression du bloc si celle-ci est activée. */
-            weight: (prevSet && prevSet.weight) ? prevSet.weight : '',
-            reps: (prevSet && prevSet.reps) ? prevSet.reps : targetRepsNum,
-            rpe:'', bw:'', done:false, autoFilled:!!(prevSet && prevSet.weight)
-          };
-        })
+        sets:Array.from({length:nSets}).map(()=>({
+            /* Rien n'est pré-rempli automatiquement : ni le poids, ni les reps. L'utilisateur
+               garde la main totale sur la saisie — le champ reste vide, et c'est UNIQUEMENT le
+               PLACEHOLDER (calculé au rendu, voir strengthExCardHTML : weightPlaceholder /
+               repsPlaceholder) qui sert de repère visuel gris — jamais la valeur réelle du champ. */
+            weight: '',
+            reps: '',
+            rpe:'', bw:'', done:false, autoFilled:false
+        }))
       };
     });
   }
@@ -1572,7 +1552,6 @@ function renderSession(){
   }
   const s=getSession(ACTIVE_SESSION_ID);
   if(!s){ACTIVE_SESSION_ID=null;return renderSession();}
-  applyBlockProgression(s);
   const sport=getSport(s.sportId);
   const routine=s.routineId?getRoutine(s.routineId):null;
   let body='';
@@ -1612,6 +1591,9 @@ function openQuickExerciseModal(sportId, onCreated){
     <div class="field"><label>Variante de (optionnel)</label><select id="qex-variant-of">${variantOfOptionsHTML(sportId,'','')}</select></div>
     <div id="qex-cat-wrap" class="field"><label>Catégorie</label><select id="qex-cat">${exerciseCategoryOptionsHTML()}</select></div>
     <div class="field"><label>Muscles principaux</label>${multiMusclePickerHTML('qex-primary')}</div>
+    <div class="field"><label>Incrément de charge (kg)</label><input type="number" id="qex-increment" step="0.5" min="0" placeholder="Ex: 2.5"><div style="font-size:11px;color:var(--text-faint);margin-top:4px;">Pas d'ajustement utilisé par les suggestions de progression pour cet exercice précis (ex: 2.5kg en barre, 1kg en haltère unitaire).</div></div>
+    <div class="row"><div class="field"><label>Reps min (défaut)</label><input type="number" id="qex-minreps" min="0" placeholder="Ex: 8"></div>
+    <div class="field"><label>Reps max (défaut)</label><input type="number" id="qex-maxreps" min="0" placeholder="Ex: 12"></div></div>
     <label style="display:flex;align-items:center;gap:8px;margin:2px 0 4px;"><input type="checkbox" id="qex-poly" style="width:18px;height:18px;flex-shrink:0;"><span>Mouvement polyarticulaire</span></label>
     <div style="font-size:11px;color:var(--text-faint);margin-bottom:10px;">Coché automatiquement si plusieurs muscles principaux sont sélectionnés — décoche/coche pour corriger.</div>
     <div id="qex-batch-variants-wrap" class="field">
@@ -1660,7 +1642,12 @@ function openQuickExerciseModal(sportId, onCreated){
       const autoPoly=primaryMuscle.length>1;
       const polyChecked=$('#qex-poly',m).checked;
       const polyarticular = polyChecked===autoPoly ? null : polyChecked;
-      const newEx={id:uid(),name,sportId,category,primaryMuscle,polyarticular,variantOf:variantOfVal};
+      const incRaw=$('#qex-increment',m).value;
+      const weightIncrement = incRaw===''?null:Number(incRaw);
+      const minRepsRaw=$('#qex-minreps',m).value, maxRepsRaw=$('#qex-maxreps',m).value;
+      const minReps = minRepsRaw===''?null:Number(minRepsRaw);
+      const maxReps = maxRepsRaw===''?null:Number(maxRepsRaw);
+      const newEx={id:uid(),name,sportId,category,primaryMuscle,polyarticular,weightIncrement,minReps,maxReps,variantOf:variantOfVal};
       DB.exercises.push(newEx);
       pending.forEach(vn=>DB.exercises.push({id:uid(),name:vn,sportId,category,primaryMuscle,variantOf:newEx.id}));
       saveDB(); closeModal(); toast('Exercice créé'); onCreated(newEx);
@@ -1752,20 +1739,16 @@ function strengthExCardHTML(s,ex,idx){
   const goal = exerciseGoal(ex.exId);
   const sameExBefore = s.entries.slice(0,idx).filter(en=>en.exId===ex.exId).length;
   const occurrence = sameExBefore>0 ? sameExBefore+1 : (s.entries.filter(en=>en.exId===ex.exId).length>1 ? 1 : 0);
-  const block = s.blockId? getBlock(s.blockId) : null;
-  const chainOn = block && block.autoProgression && block.autoProgression.enabled && s.routineId;
   const rows = ex.sets.map((st,si)=>{
     const prevSet = hist && hist.sets[si];
-    const chain = chainOn ? blockChainWeight(block, s.routineId, s.date, ex.exId, si) : null;
-    const weightPlaceholder = chain? chain.target : (prevSet&&prevSet.weight?prevSet.weight:'0');
+    /* Le conseil (placeholder + texte gris) n'est JAMAIS écrit dans .value : l'utilisateur
+       garde la main totale sur la saisie, quel que soit le réglage du bloc. */
+    const weightPlaceholder = sugg ? sugg.suggested : (prevSet&&prevSet.weight?prevSet.weight:'0');
     const repsPlaceholder = ex.targetReps ? ex.targetReps : (prevSet&&prevSet.reps?prevSet.reps:'0');
-    const weightHint = chain
-      ? `<div class="prev-hint" style="color:var(--accent);">S+${chain.weekIdx} · ${chain.refWeight}→${chain.target}kg</div>`
-      : (prevSet&&prevSet.weight?`<div class="prev-hint">Prev ${prevSet.weight}kg</div>`:'');
     return `
     <tr class="set-row ${st.done?'done':''}" data-ex="${idx}" data-set="${si}">
       <td>${si+1}</td>
-      <td><input type="number" inputmode="decimal" class="set-input" data-field="weight" value="${st.weight}" placeholder="${weightPlaceholder}" style="${st.autoFilled?'color:var(--accent);':''}">${weightHint}</td>
+      <td><input type="number" inputmode="decimal" class="set-input" data-field="weight" value="${st.weight}" placeholder="${weightPlaceholder}"></td>
       <td><input type="number" inputmode="numeric" class="set-input" data-field="reps" value="${st.reps}" placeholder="${repsPlaceholder}">${prevSet&&prevSet.reps?`<div class="prev-hint">Prev ${prevSet.reps}</div>`:''}</td>
       <td><input type="number" inputmode="numeric" class="set-input" data-field="rpe" value="${st.rpe}" placeholder="–" min="1" max="10"></td>
       ${isCali?`<td><input type="number" inputmode="decimal" class="set-input" data-field="bw" value="${st.bw}" placeholder="lest"></td>`:''}
@@ -1788,11 +1771,10 @@ function strengthExCardHTML(s,ex,idx){
     ${ex.targetReps?`<div style="font-size:11px;color:var(--text-faint);margin-bottom:6px;">Objectif de séance : ${ex.targetSets||ex.sets.length}×${ex.targetReps}</div>`:''}
     ${goalBarHTML(goal)}
     ${zoneWarn?`<div class="chip" style="border-color:var(--danger);color:var(--danger);margin-bottom:8px;">⚠️ Zone sensible : ${zoneWarn}</div>`:''}
-    ${chainOn?`<div class="chip" style="border-color:var(--accent);color:var(--accent);margin-bottom:8px;">🔄 Surcharge progressive active${(function(){const r=blockChainWeight(block,s.routineId,s.date,ex.exId,0);return r?` — réf. ${r.refWeight}kg (S+${r.weekIdx})`:' — en attente de la 1ère séance validée';})()}</div>`:''}
     ${hist?`<div style="font-size:11px;color:var(--text-dim);margin-bottom:4px;">📅 Dernière fois (${exerciseDisplayName(exDef)}) le ${fmtDate(hist.date,{short:true})} : ${hist.sets.map(s2=>`${s2.weight||'?'}kg×${s2.reps||'?'}`).join(', ')||'—'}</div>`:`<div style="font-size:11px;color:var(--text-faint);margin-bottom:4px;">📅 Aucun historique pour ce profil</div>`}
     ${volProg?`<div style="font-size:11px;color:var(--text-dim);margin-bottom:4px;">📊 Volume : ${Math.round(volProg.volNow)}kg <span style="color:${volProg.pct>=0?'var(--accent)':'var(--text-faint)'};">(${volProg.pct>=0?'+':''}${volProg.pct.toFixed(0)}% vs séance précédente)</span></div>`:''}
     ${trend?`<div style="font-size:11px;color:${trend.type==='plateau'?'var(--warn)':'var(--text-dim)'};margin-bottom:8px;">${trend.type==='plateau'?'⚠️ ':'📈 '}${trend.label}</div>`:''}
-    ${sugg?`<div class="chip" style="border-color:var(--accent);color:var(--accent);margin-bottom:10px;">💡 Suggestion : ${sugg.suggested}kg <span style="color:var(--text-dim);font-weight:500;">— ${sugg.note}</span> <button data-apply-suggestion="${idx}" data-sugg-weight="${sugg.suggested}" style="background:none;border:none;color:var(--accent);font-weight:700;margin-left:4px;text-decoration:underline;">appliquer</button></div>`:''}
+    ${sugg?`<div class="helper-text">💡 <strong>Conseil (indicatif) : ${sugg.suggested}kg</strong> — ${sugg.note} <button type="button" data-apply-suggestion="${idx}" data-sugg-weight="${sugg.suggested}">reprendre ce chiffre</button></div>`:''}
     <table class="set-table"><thead><tr><th>Série</th><th>Kg</th><th>Reps</th><th>RPE</th>${isCali?'<th>Lest</th>':''}<th></th><th>✓</th></tr></thead>
     <tbody>${rows}</tbody></table>
     <div style="display:flex;gap:8px;margin-top:10px;">
@@ -2072,7 +2054,6 @@ function renderBlockDetail(){
   const status = today<b.startDate?'À venir':today>b.endDate?'Terminé':'En cours';
   const sessions=DB.sessions.filter(s=>s.blockId===b.id).sort((a,b2)=>a.date.localeCompare(b2.date));
   const done=sessions.filter(s=>s.status==='done').length;
-  const ap=b.autoProgression||{enabled:false};
   return `
   <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
     <button class="icon-btn" id="block-detail-back"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15 18l-6-6 6-6"/></svg></button>
@@ -2090,11 +2071,10 @@ function renderBlockDetail(){
 
   <div class="kpi-grid" style="margin-bottom:16px;">
     <div class="kpi"><div class="lbl">Séances faites</div><div class="val mono">${done}<span style="font-size:13px;color:var(--text-faint)">/${sessions.length}</span></div></div>
-    <div class="kpi"><div class="lbl">Auto-progression</div><div class="val mono" style="font-size:15px;color:${ap.enabled?'var(--accent)':'var(--text-faint)'}">${ap.enabled?(ap.mode==='percent'?'+'+ap.value+'%/sem':'+'+ap.value+'kg/sem'):'Désactivée'}</div></div>
   </div>
 
   <div class="row" style="margin-bottom:18px;">
-    <button class="btn btn-secondary" data-week-block="${b.id}">📅 Semaine type & progression</button>
+    <button class="btn btn-secondary" data-week-block="${b.id}">📅 Semaine type</button>
     <button class="btn btn-ghost" data-dup-block="${b.id}">Dupliquer</button>
   </div>
 
@@ -2357,13 +2337,13 @@ function renderExercisesTab(){
       <div class="ex-item-row">
         <div class="ex-item-info" data-lib-label><div class="ex-item-title">${e.name}</div><div class="ex-item-meta">${muscleArr(e).join(', ')||e.zone||''}</div></div>
         <div class="ex-item-actions">
-          ${variants.length?`<button type="button" class="chip variant-toggle" data-toggle-variants="${e.id}" style="border:none;color:var(--text-dim);gap:4px;">${variants.length} variante${variants.length>1?'s':''}<svg class="chevron" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="transition:transform .15s;"><path d="M6 9l6 6 6-6"/></svg></button>`:''}
+          ${variants.length?`<button type="button" class="chip variant-toggle${EX_VARIANTS_OPEN[e.id]?' open':''}" data-toggle-variants="${e.id}" style="border:none;color:var(--text-dim);gap:4px;">${variants.length} variante${variants.length>1?'s':''}<svg class="chevron" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="transition:transform .15s;transform:rotate(${EX_VARIANTS_OPEN[e.id]?180:0}deg);"><path d="M6 9l6 6 6-6"/></svg></button>`:''}
           <button class="chip" data-edit-exercise="${e.id}" style="border:none;color:var(--text-dim);">modifier</button>
           <button class="chip" data-add-variant="${e.id}" style="border:none;color:var(--accent);">+ variante</button>
           <button class="icon-btn" data-del-exercise="${e.id}" style="width:32px;height:32px;flex-shrink:0;"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m2 0v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V6"/></svg></button>
         </div>
       </div>
-      ${variants.length?`<div class="variants-wrap" id="variants-${e.id}" style="display:none;">${variants.map(v=>`<div class="ex-variant-row"><div class="swatch" style="background:${sport.color}44;"></div><div class="main"><div class="title">${e.name} - ${v.name}</div><div class="meta">variante · ${muscleArr(v).join(', ')||v.zone||v.category||''}</div></div>
+      ${variants.length?`<div class="variants-wrap" id="variants-${e.id}" style="display:${EX_VARIANTS_OPEN[e.id]?'block':'none'};">${variants.map(v=>`<div class="ex-variant-row"><div class="swatch" style="background:${sport.color}44;"></div><div class="main"><div class="title">${e.name} - ${v.name}</div><div class="meta">variante · ${muscleArr(v).join(', ')||v.zone||v.category||''}</div></div>
       <div class="actions">
         <button class="chip" data-edit-exercise="${v.id}" style="border:none;color:var(--text-dim);">modifier</button>
         <button class="icon-btn" data-del-exercise="${v.id}" style="width:30px;height:30px;flex-shrink:0;"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m2 0v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V6"/></svg></button>
@@ -2377,12 +2357,18 @@ function renderExercisesTab(){
       <svg class="chevron" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="transition:transform .15s;transform:rotate(${isOpen?0:-90}deg);"><path d="M6 9l6 6 6-6"/></svg>
     </button>
     <div class="ex-lib-outer" id="exgrid-${sid}" style="display:${isOpen?'block':'none'};">
-      ${!cats.length?`<div style="font-size:12.5px;color:var(--text-dim);padding:8px 2px;">Aucun exercice pour ce sport.</div>`:`
-      <input id="${idPrefix}-search" placeholder="Rechercher un exercice..." style="margin-bottom:10px;">
-      <div class="tabs-sub" style="flex-wrap:wrap;">${cats.map((c,i)=>`<button type="button" data-lib-tab="${c}" class="${i===0?'active':''}">${c}</button>`).join('')}</div>
+      ${!cats.length?`<div style="font-size:12.5px;color:var(--text-dim);padding:8px 2px;">Aucun exercice pour ce sport.</div>`:(()=>{
+        /* Onglet catégorie actif et texte de recherche mémorisés par sport (EX_LIB_TAB / EX_LIB_SEARCH)
+           pour ne pas revenir au 1er onglet + recherche vide à chaque re-rendu (après un ajout/suppr/modif). */
+        const activeCat = (EX_LIB_TAB[sid] && cats.includes(EX_LIB_TAB[sid])) ? EX_LIB_TAB[sid] : cats[0];
+        const searchVal = EX_LIB_SEARCH[sid]||'';
+        return `
+      <input id="${idPrefix}-search" placeholder="Rechercher un exercice..." style="margin-bottom:10px;" value="${searchVal.replace(/"/g,'&quot;')}">
+      <div class="tabs-sub" style="flex-wrap:wrap;">${cats.map(c=>`<button type="button" data-lib-tab="${c}" class="${c===activeCat?'active':''}">${c}</button>`).join('')}</div>
       <div class="ex-lib-panels">
-      ${cats.map((c,i)=>`<div class="ex-grid" data-lib-panel="${c}" style="display:${i===0?'grid':'none'};">${byCat[c].map(rowHTML).join('')}</div>`).join('')}
-      </div>`}
+      ${cats.map(c=>`<div class="ex-grid" data-lib-panel="${c}" style="display:${c===activeCat?'grid':'none'};">${byCat[c].map(rowHTML).join('')}</div>`).join('')}
+      </div>`;
+      })()}
     </div>`;
   }).join('')}
   `;
@@ -2404,6 +2390,10 @@ function openExerciseModal(existing){
     <div class="field"><label>Variante de (optionnel)</label><select id="exf-variant-of">${variantOfOptionsHTML(ex.sportId||(DB.sports[0]||{}).id,ex.variantOf||'',ex.id)}</select></div>
     <div id="exf-cat-wrap" class="field"><label>Catégorie</label><select id="exf-cat">${exerciseCategoryOptionsHTML(ex.category)}</select></div>
     <div class="field"><label>Muscles principaux</label>${multiMusclePickerHTML('exf-primary', muscleArr(ex))}</div>
+    <div class="field"><label>Incrément de charge (kg)</label><input type="number" id="exf-increment" step="0.5" min="0" value="${ex.weightIncrement!=null?ex.weightIncrement:''}" placeholder="Ex: 2.5"><div style="font-size:11px;color:var(--text-faint);margin-top:4px;">Pas d'ajustement utilisé par les suggestions de progression pour cet exercice précis (ex: 2.5kg en barre, 1kg en haltère unitaire). Laisse vide pour utiliser la valeur par défaut (2.5kg poly / 1kg isolation).</div></div>
+    <div class="row"><div class="field"><label>Reps min (défaut)</label><input type="number" id="exf-minreps" min="0" value="${ex.minReps!=null?ex.minReps:''}" placeholder="Ex: 8"></div>
+    <div class="field"><label>Reps max (défaut)</label><input type="number" id="exf-maxreps" min="0" value="${ex.maxReps!=null?ex.maxReps:''}" placeholder="Ex: 12"></div></div>
+    <div style="font-size:11px;color:var(--text-faint);margin-bottom:10px;">Fourchette de reps par défaut utilisée par les suggestions RPE quand une routine/séance ne précise pas déjà un objectif de reps.</div>
     <label style="display:flex;align-items:center;gap:8px;margin:2px 0 4px;"><input type="checkbox" id="exf-poly" style="width:18px;height:18px;flex-shrink:0;"><span>Mouvement polyarticulaire</span></label>
     <div style="font-size:11px;color:var(--text-faint);margin-bottom:10px;">Coché automatiquement si plusieurs muscles principaux sont sélectionnés — décoche/coche pour corriger manuellement (ex: Curl marteau = biceps + avant-bras mais reste isolation).</div>
     <div id="exf-batch-variants-wrap" class="field">
@@ -2476,7 +2466,12 @@ function openExerciseModal(existing){
       const autoPoly=primaryMuscle.length>1;
       const polyChecked=$('#exf-poly',m).checked;
       const polyarticular = polyChecked===autoPoly ? null : polyChecked;
-      const data={name,sportId:$('#exf-sport',m).value,category,primaryMuscle,polyarticular,variantOf:variantOfVal};
+      const incRaw=$('#exf-increment',m).value;
+      const weightIncrement = incRaw===''?null:Number(incRaw);
+      const minRepsRaw=$('#exf-minreps',m).value, maxRepsRaw=$('#exf-maxreps',m).value;
+      const minReps = minRepsRaw===''?null:Number(minRepsRaw);
+      const maxReps = maxRepsRaw===''?null:Number(maxRepsRaw);
+      const data={name,sportId:$('#exf-sport',m).value,category,primaryMuscle,polyarticular,weightIncrement,minReps,maxReps,variantOf:variantOfVal};
       if(editing){
         delete ex.zone; delete ex.region; delete ex.muscle; delete ex.pattern; delete ex.secondaryMuscles;
         Object.assign(ex,data);
@@ -2576,9 +2571,11 @@ function bindProgramsEvents(){
     DB.exercises=DB.exercises.filter(x=>x.id!==id); saveDB(); render();
   }));
   $$('[data-toggle-variants]').forEach(b=>b.addEventListener('click',()=>{
-    const wrap=$('#variants-'+b.dataset.toggleVariants);
+    const exId=b.dataset.toggleVariants;
+    const wrap=$('#variants-'+exId);
     if(!wrap) return;
     const open = wrap.style.display==='none';
+    EX_VARIANTS_OPEN[exId]=open;
     wrap.style.display = open?'block':'none';
     b.classList.toggle('open', open);
     const chev=b.querySelector('.chevron');
@@ -2599,13 +2596,17 @@ function bindProgramsEvents(){
      sections dans le DOM ne s'interfèrent pas. */
   $$('[data-lib-tab]').forEach(btn=>btn.addEventListener('click',()=>{
     const root=btn.closest('.ex-lib-outer');
+    const sid=root.id.replace('exgrid-','');
+    EX_LIB_TAB[sid]=btn.dataset.libTab;
     $$('[data-lib-tab]',root).forEach(b=>b.classList.toggle('active',b===btn));
     $$('[data-lib-panel]',root).forEach(p=>p.style.display = p.dataset.libPanel===btn.dataset.libTab ? 'grid':'none');
   }));
   $$('input[id^="exlib-"][id$="-search"]').forEach(search=>{
     const root=search.closest('.ex-lib-outer');
-    search.addEventListener('input',()=>{
+    const sid=root.id.replace('exgrid-','');
+    const applyFilter=()=>{
       const q=search.value.trim().toLowerCase();
+      EX_LIB_SEARCH[sid]=search.value;
       if(!q){
         const activeTab=$('[data-lib-tab].active',root);
         $$('[data-lib-panel]',root).forEach(p=>p.style.display = p.dataset.libPanel===activeTab?.dataset.libTab ? 'grid':'none');
@@ -2618,7 +2619,9 @@ function bindProgramsEvents(){
         const match=label && label.textContent.toLowerCase().includes(q);
         r.style.display=match?'':'none';
       });
-    });
+    };
+    search.addEventListener('input',applyFilter);
+    if(search.value) applyFilter(); /* recherche mémorisée : ré-applique le filtre au premier rendu */
   });
   $$('[data-add-variant]').forEach(b=>b.addEventListener('click',()=>{
     const parent=getExercise(b.dataset.addVariant);
@@ -2683,7 +2686,7 @@ function openBlockModal(b,onSaved){
       const data={name,blockType:$('#bf-type',m).value,startDate:$('#bf-start',m).value,endDate:$('#bf-end',m).value,sportIds,notes:$('#bf-notes',m).value,color:$('#bf-color',m).value,profileId};
       let block;
       if(editing){ Object.assign(b,data); block=b; }
-      else { block={id:uid(),weeklyPlan:{},autoProgression:{enabled:false,mode:'percent',value:2.5},...data}; DB.blocks.push(block); }
+      else { block={id:uid(),weeklyPlan:{},...data}; DB.blocks.push(block); }
       saveDB(); closeModal(); toast('Bloc enregistré'); if(onSaved) onSaved(block); else render();
     });
   }});
@@ -2698,7 +2701,7 @@ function duplicateBlock(b){
       const newStart=$('#dupb-start',m).value;
       const durationDays=isoWeeksBetween(b.startDate,b.endDate)*7 || Math.round((new Date(b.endDate)-new Date(b.startDate))/864e5);
       const newEnd=addDays(newStart,durationDays);
-      const newBlock={id:uid(),name:b.name+' (copie)',blockType:b.blockType,startDate:newStart,endDate:newEnd,sportIds:[...(b.sportIds||[])],notes:b.notes,color:nextBlockColor(),profileId:b.profileId,weeklyPlan:{},autoProgression:JSON.parse(JSON.stringify(b.autoProgression||{enabled:false,mode:'percent',value:2.5}))};
+      const newBlock={id:uid(),name:b.name+' (copie)',blockType:b.blockType,startDate:newStart,endDate:newEnd,sportIds:[...(b.sportIds||[])],notes:b.notes,color:nextBlockColor(),profileId:b.profileId,weeklyPlan:{}};
       if($('#dupb-routines',m).checked){
         const routineMap={};
         const usedIds=new Set(Object.values(b.weeklyPlan||{}).flat());
@@ -2715,10 +2718,30 @@ function duplicateBlock(b){
     });
   }});
 }
+/* Génère les séances "planned" d'un bloc sur toute sa durée, à partir d'un plan hebdomadaire
+   {jourISO(0-6): [routineId]}. Idempotent : ignore les jours où une séance existe déjà pour
+   la même routine à la même date. Retourne {created, skipped}. */
+function generateBlockSessions(block, weeklyPlan){
+  let created=0, skipped=0;
+  let cursor=block.startDate;
+  while(cursor<=block.endDate){
+    const dow=(new Date(cursor+'T00:00:00').getDay()+6)%7;
+    const routineIds=weeklyPlan[dow]||[];
+    routineIds.forEach(rid=>{
+      const already=DB.sessions.some(s=>s.date===cursor && s.routineId===rid);
+      if(already){ skipped++; return; }
+      const r=getRoutine(rid); if(!r) return;
+      const entries=buildEntriesFromRoutine(r.id, cursor, block.profileId);
+      DB.sessions.push({id:uid(),date:cursor,sportId:r.sportId,routineId:r.id,blockId:block.id,status:'planned',entries,cardio:null,notes:'',profileId:block.profileId});
+      created++;
+    });
+    cursor=addDays(cursor,1);
+  }
+  return {created,skipped};
+}
 function openWeekPlanModal(b){
   const days=['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
   const plan=b.weeklyPlan||{};
-  const ap=b.autoProgression||{enabled:false,mode:'percent',value:2.5};
   const routineOpts=(dayIdx)=>{
     const sel=(plan[dayIdx]||[])[0]||'';
     return `<option value="">— Repos —</option>${DB.routines.map(r=>`<option value="${r.id}" ${sel===r.id?'selected':''}>${r.name}</option>`).join('')}`;
@@ -2726,13 +2749,7 @@ function openWeekPlanModal(b){
   openModal('Semaine type — '+b.name,`
     <div style="font-size:12px;color:var(--text-dim);margin-bottom:14px;">Définis quelle routine revient chaque jour de la semaine, puis génère les séances sur toute la durée du bloc.</div>
     ${days.map((d,i)=>`<div class="field"><label>${d}</label><select class="wk-day" data-day="${i}">${routineOpts(i)}</select><div class="wk-preview" data-preview="${i}">${routineDetailHTML((plan[i]||[])[0]||'')}</div></div>`).join('')}
-    <div class="section-title">Surcharge progressive automatique</div>
-    <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;"><input type="checkbox" id="wk-ap-enabled" ${ap.enabled?'checked':''} style="width:18px;height:18px;"> Activer l'incrémentation automatique des charges</label>
-    <div class="row">
-      <div class="field"><label>Type</label><select id="wk-ap-mode"><option value="percent" ${ap.mode==='percent'?'selected':''}>Pourcentage / semaine</option><option value="fixed" ${ap.mode==='fixed'?'selected':''}>Kg fixes / semaine</option></select></div>
-      <div class="field"><label>Valeur</label><input type="number" step="0.5" id="wk-ap-value" value="${ap.value}"></div>
-    </div>
-    <div style="font-size:11px;color:var(--text-faint);margin-bottom:14px;">Les charges suggérées (placeholders) sur les séances générées augmenteront chaque semaine par rapport à ta dernière performance connue.</div>
+    <div class="helper-text" style="margin-top:4px;">💡 Chaque séance affichera automatiquement un conseil de charge (placeholder + texte d'aide) basé sur le RPE de la dernière séance validée pour chaque exercice — c'est indicatif, jamais rempli à ta place.</div>
     <button class="btn btn-primary" id="wk-generate" style="margin-top:6px;">Générer les séances du bloc</button>
   `,{onMount:(m)=>{
     $$('.wk-day',m).forEach(sel=>sel.addEventListener('change',()=>{
@@ -2742,23 +2759,8 @@ function openWeekPlanModal(b){
       const newPlan={};
       $$('.wk-day',m).forEach(sel=>{ if(sel.value) newPlan[sel.dataset.day]=[sel.value]; });
       b.weeklyPlan=newPlan;
-      b.autoProgression={enabled:$('#wk-ap-enabled',m).checked,mode:$('#wk-ap-mode',m).value,value:Number($('#wk-ap-value',m).value)||0};
       saveDB();
-      let created=0, skipped=0;
-      let cursor=b.startDate;
-      while(cursor<=b.endDate){
-        const dow=(new Date(cursor+'T00:00:00').getDay()+6)%7;
-        const routineIds=newPlan[dow]||[];
-        routineIds.forEach(rid=>{
-          const already=DB.sessions.some(s=>s.date===cursor && s.routineId===rid);
-          if(already){ skipped++; return; }
-          const r=getRoutine(rid); if(!r) return;
-          const entries=buildEntriesFromRoutine(r.id, cursor, b.profileId);
-          DB.sessions.push({id:uid(),date:cursor,sportId:r.sportId,routineId:r.id,blockId:b.id,status:'planned',entries,cardio:null,notes:'',profileId:b.profileId});
-          created++;
-        });
-        cursor=addDays(cursor,1);
-      }
+      const {created,skipped}=generateBlockSessions(b,newPlan);
       saveDB(); closeModal(); toast(`${created} séance(s) générée(s)${skipped?', '+skipped+' déjà existante(s) ignorée(s)':''}`); render();
     });
   }});
