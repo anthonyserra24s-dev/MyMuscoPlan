@@ -220,7 +220,7 @@ main#views{padding:16px 16px 24px;}
 .sess-pill[draggable=true]{touch-action:none;}
 
 /* Modal */
-.modal-backdrop{position:fixed;inset:0;background:rgba(10,11,14,.45);backdrop-filter:blur(2px);z-index:100;display:flex;align-items:flex-end;justify-content:center;opacity:0;pointer-events:none;transition:opacity .2s;}
+.modal-backdrop{position:fixed;inset:0;background:rgba(10,11,14,.45);backdrop-filter:blur(2px);z-index:5100;display:flex;align-items:flex-end;justify-content:center;opacity:0;pointer-events:none;transition:opacity .2s;}
 .modal-backdrop.open{opacity:1;pointer-events:auto;}
 .modal-sheet{
   background:var(--surface);border:1px solid var(--border);border-bottom:none;
@@ -234,7 +234,7 @@ main#views{padding:16px 16px 24px;}
 .modal-title .icon-btn{width:32px;height:32px;background:var(--surface-2);border-color:var(--border);color:var(--text-dim);}
 
 /* Toast */
-#toast-root{position:fixed;top:calc(12px + var(--safe-top));left:50%;transform:translateX(-50%);z-index:200;display:flex;flex-direction:column;gap:8px;align-items:center;width:100%;pointer-events:none;}
+#toast-root{position:fixed;top:calc(12px + var(--safe-top));left:50%;transform:translateX(-50%);z-index:5200;display:flex;flex-direction:column;gap:8px;align-items:center;width:100%;pointer-events:none;}
 .toast{background:var(--ink);border:1px solid rgba(255,255,255,.1);color:#F6F7F9;padding:11px 18px;border-radius:99px;font-size:13px;font-weight:600;box-shadow:0 8px 24px rgba(16,18,22,.25);animation:toastin .2s ease;}
 @keyframes toastin{from{opacity:0;transform:translateY(-8px);}to{opacity:1;transform:none;}}
 
@@ -461,6 +461,7 @@ main#views{padding:16px 16px 24px;}
 
 <div id="modal-root"></div>
 <div id="toast-root"></div>
+<input type="file" id="importFileInput" accept=".json,application/json" style="display:none">
 
 <script>
 /* ============================================================
@@ -586,10 +587,11 @@ function bindMultiMusclePicker(id, m){
    TRI & AFFICHAGE UNIFIÉS DES EXERCICES
    Toutes les listes d'exercices de l'appli (routine, séance, bibliothèque,
    stats) passent par ces helpers pour un ordre et un libellé cohérents. */
-/* La liste des catégories (Push/Pull/Legs/...) vit désormais dans GLOBAL.categories
-   (partagée entre profils, comme le catalogue d'exercices) : modifiable depuis
-   Réglages (ajout / renommage avec cascade sur les exercices / suppression).
-   DEFAULT_CATEGORIES sert uniquement de valeur initiale pour un nouvel appareil. */
+/* La liste des catégories (Push/Pull/Legs/...) vit dans le catalogue propre à CHAQUE profil
+   (DB.categories, lui-même issu du silo localStorage du profil actif — plus aucun catalogue
+   partagé entre profils) : modifiable depuis Réglages (ajout / renommage avec cascade sur les
+   exercices / suppression), sans jamais affecter les autres profils.
+   DEFAULT_CATEGORIES sert uniquement de valeur initiale pour un nouveau profil. */
 const DEFAULT_CATEGORIES = ['Push','Pull','Legs','Abdos / Core','Épaules & Santé / Préhab','Endurance / Sports'];
 const CAT_ABS_MUSCLES = ['Abdominaux','Obliques','Lombaires'];
 const CAT_PUSH_MUSCLES = ['Pectoraux','Épaules','Triceps'];
@@ -702,31 +704,37 @@ const LEGACY_DB_KEY = 'muscoplan_db_v1';
 function profileStorageKey(profileId){ return 'muscoplan_profile_'+profileId+'_v1'; }
 
 function defaultGlobal(){
-  return {
-    version:2,
-    sports:[
-      {id:'sp_muscu',name:'Musculation',type:'strength',color:'#18181B',bodyweightBased:false},
-      {id:'sp_cali',name:'Calisthenics',type:'strength',color:'#52525B',bodyweightBased:true},
-      {id:'sp_course',name:'Course / Athlétisme',type:'cardio',color:'#71717A',bodyweightBased:false},
-      {id:'sp_padel',name:'Padel / Tennis',type:'racket',color:'#A1A1AA',bodyweightBased:false},
-    ],
-    exercises:[
-      {id:'ex1',sportId:'sp_muscu',name:'Développé couché',category:'Push',primaryMuscle:'Pectoraux',variantOf:null},
-      {id:'ex2',sportId:'sp_muscu',name:'Squat',category:'Legs',primaryMuscle:'Quadriceps',variantOf:null},
-      {id:'ex3',sportId:'sp_muscu',name:'Soulevé de terre',category:'Legs',primaryMuscle:'Fessiers',variantOf:null},
-      {id:'ex4',sportId:'sp_muscu',name:'Tractions lestées',category:'Pull',primaryMuscle:'Dos',variantOf:null},
-      {id:'ex5',sportId:'sp_muscu',name:'Développé militaire',category:'Push',primaryMuscle:'Épaules',variantOf:null},
-      {id:'ex6',sportId:'sp_cali',name:'Dips',category:'Push',primaryMuscle:'Triceps',variantOf:null},
-      {id:'ex7',sportId:'sp_cali',name:'Tractions',category:'Pull',primaryMuscle:'Dos',variantOf:null},
-      {id:'ex8',sportId:'sp_cali',name:'Pistol squat',category:'Legs',primaryMuscle:'Quadriceps',variantOf:null},
-    ],
-    muscles:[...DEFAULT_MUSCLE_LIST],
-    categories:[...DEFAULT_CATEGORIES],
-    profiles:[]
-  };
+  /* GLOBAL ne contient plus QUE le registre des profils (id + nom) — le strict minimum
+     nécessaire pour afficher l'écran de sélection. Absolument aucune donnée de fitness
+     (exercices, sports, catégories, muscles, routines, séances...) n'y vit plus : chaque
+     profil est désormais totalement indépendant, jusqu'à son propre catalogue d'exercices. */
+  return { version:3, profiles:[] };
 }
+const SEED_SPORTS=[
+  {id:'sp_muscu',name:'Musculation',type:'strength',color:'#18181B',bodyweightBased:false},
+  {id:'sp_cali',name:'Calisthenics',type:'strength',color:'#52525B',bodyweightBased:true},
+  {id:'sp_course',name:'Course / Athlétisme',type:'cardio',color:'#71717A',bodyweightBased:false},
+  {id:'sp_padel',name:'Padel / Tennis',type:'racket',color:'#A1A1AA',bodyweightBased:false},
+];
+const SEED_EXERCISES=[
+  {id:'ex1',sportId:'sp_muscu',name:'Développé couché',category:'Push',primaryMuscle:'Pectoraux',variantOf:null},
+  {id:'ex2',sportId:'sp_muscu',name:'Squat',category:'Legs',primaryMuscle:'Quadriceps',variantOf:null},
+  {id:'ex3',sportId:'sp_muscu',name:'Soulevé de terre',category:'Legs',primaryMuscle:'Fessiers',variantOf:null},
+  {id:'ex4',sportId:'sp_muscu',name:'Tractions lestées',category:'Pull',primaryMuscle:'Dos',variantOf:null},
+  {id:'ex5',sportId:'sp_muscu',name:'Développé militaire',category:'Push',primaryMuscle:'Épaules',variantOf:null},
+  {id:'ex6',sportId:'sp_cali',name:'Dips',category:'Push',primaryMuscle:'Triceps',variantOf:null},
+  {id:'ex7',sportId:'sp_cali',name:'Tractions',category:'Pull',primaryMuscle:'Dos',variantOf:null},
+  {id:'ex8',sportId:'sp_cali',name:'Pistol squat',category:'Legs',primaryMuscle:'Quadriceps',variantOf:null},
+];
 function defaultProfileData(){
+  /* Catalogue COMPLET propre à ce profil : exercices, sports, catégories, muscles. Chaque
+     profil part avec sa propre copie des valeurs de départ — les modifier (ajouter un
+     exercice, renommer une catégorie...) dans un profil n'affecte plus jamais les autres. */
   return {
+    sports:JSON.parse(JSON.stringify(SEED_SPORTS)),
+    exercises:JSON.parse(JSON.stringify(SEED_EXERCISES)),
+    categories:[...DEFAULT_CATEGORIES],
+    muscles:[...DEFAULT_MUSCLE_LIST],
     blocks:[], routines:[], sessions:[], bodylog:[], nutrilog:[], injuries:[], goals:[],
     settings:{ units:'kg', goalProtein:150,goalCarbs:250,goalFat:70,goalWater:2.5, restDefault:90, onboarded:true }
   };
@@ -754,9 +762,10 @@ function loadProfileData(profileId){
 /* Migration ponctuelle depuis l'ancienne version mono-fichier (une seule clé
    partagée entre tous les profils). Séances/blocs sont répartis vers leur
    profil d'origine (via l'ancien tag profileId) ; le reste (routines,
-   objectifs, blessures, journal...) part vers le premier profil, faute de
-   pouvoir déterminer un propriétaire dans l'ancien format. Ne s'exécute
-   qu'une fois : l'ancienne clé est supprimée une fois la migration faite. */
+   objectifs, blessures, journal, et le catalogue d'exercices/sports/catégories/
+   muscles alors partagé) est DUPLIQUÉ dans CHAQUE profil — après migration,
+   plus aucune donnée n'est partagée entre profils. Ne s'exécute qu'une fois :
+   l'ancienne clé est supprimée une fois la migration faite. */
 function migrateLegacyIfNeeded(){
   if(localStorage.getItem(GLOBAL_KEY)) return; // déjà migré / déjà sur la nouvelle archi
   const raw=localStorage.getItem(LEGACY_DB_KEY);
@@ -765,15 +774,15 @@ function migrateLegacyIfNeeded(){
     const old=JSON.parse(raw);
     const profiles=(old.profiles&&old.profiles.length)?old.profiles:[{id:'pr_default',name:'Moi'}];
     const g=defaultGlobal();
-    g.sports=old.sports||g.sports;
-    g.exercises=old.exercises||g.exercises;
-    g.muscles=old.muscles||g.muscles;
-    g.categories=old.categories||g.categories;
     g.profiles=profiles.map(p=>({id:p.id,name:p.name}));
     localStorage.setItem(GLOBAL_KEY, JSON.stringify(g));
     const defaultProfileId=profiles[0].id;
     profiles.forEach(p=>{
       const pd=defaultProfileData();
+      pd.sports=old.sports||pd.sports;
+      pd.exercises=old.exercises||pd.exercises;
+      pd.categories=old.categories||pd.categories;
+      pd.muscles=old.muscles||pd.muscles;
       pd.blocks=(old.blocks||[]).filter(b=>(b.profileId||defaultProfileId)===p.id);
       pd.sessions=(old.sessions||[]).filter(s=>(s.profileId||defaultProfileId)===p.id);
       if(p.id===defaultProfileId){
@@ -793,27 +802,30 @@ function migrateLegacyIfNeeded(){
   }catch(e){ console.error('Migration MuscoPlan échouée', e); }
 }
 let DB = null;
-/* Fusionne GLOBAL + les données du profil actif dans DB (objet unique
-   utilisé par tout le reste de l'application, inchangé). */
+/* Charge le profil sélectionné dans DB : plus aucun champ n'est partagé depuis GLOBAL
+   (sports/exercises/categories/muscles viennent désormais tous du silo du profil lui-même) —
+   seul `profiles` (le registre des noms, pour l'affichage) reste une référence à GLOBAL. */
 function enterProfile(profileId){
   const p=(GLOBAL.profiles||[]).find(x=>x.id===profileId);
   if(!p) return;
   CURRENT_PROFILE_ID=profileId;
   const pd=loadProfileData(profileId);
-  DB={ sports:GLOBAL.sports, exercises:GLOBAL.exercises, muscles:GLOBAL.muscles, categories:GLOBAL.categories, profiles:GLOBAL.profiles,
+  DB={ sports:pd.sports, exercises:pd.exercises, muscles:pd.muscles, categories:pd.categories, profiles:GLOBAL.profiles,
        blocks:pd.blocks, routines:pd.routines, sessions:pd.sessions, bodylog:pd.bodylog, nutrilog:pd.nutrilog,
        injuries:pd.injuries, goals:pd.goals, settings:pd.settings };
   DB.settings.activeProfileId=profileId;
   hideLockscreen();
   navigate('dashboard');
+  if(PENDING_SHARE_IMPORT){ const pkg=PENDING_SHARE_IMPORT; PENDING_SHARE_IMPORT=null; openImportPreviewModal(pkg); }
 }
-/* Persiste DB dans les deux couches (global partagé + silo du profil actif).
-   Ne fait rien si aucun profil n'est actif (ex: sur l'écran de sélection). */
+/* Persiste DB : le registre de noms (GLOBAL.profiles) d'un côté, et TOUT le reste — y
+   compris désormais sports/exercises/categories/muscles — dans le silo du profil actif. */
 function saveDB(){
   if(!CURRENT_PROFILE_ID || !DB) return;
-  GLOBAL.sports=DB.sports; GLOBAL.exercises=DB.exercises; GLOBAL.muscles=DB.muscles; GLOBAL.categories=DB.categories; GLOBAL.profiles=DB.profiles;
+  GLOBAL.profiles=DB.profiles;
   saveGlobal();
-  const pd={ blocks:DB.blocks, routines:DB.routines, sessions:DB.sessions, bodylog:DB.bodylog, nutrilog:DB.nutrilog,
+  const pd={ sports:DB.sports, exercises:DB.exercises, categories:DB.categories, muscles:DB.muscles,
+             blocks:DB.blocks, routines:DB.routines, sessions:DB.sessions, bodylog:DB.bodylog, nutrilog:DB.nutrilog,
              injuries:DB.injuries, goals:DB.goals, settings:DB.settings };
   localStorage.setItem(profileStorageKey(CURRENT_PROFILE_ID), JSON.stringify(pd));
 }
@@ -848,11 +860,13 @@ function renderLockscreen(){
    cet outil permet de choisir UN OU PLUSIEURS profils précis à exporter (cases à cocher),
    et à l'import de choisir dans QUEL profil chaque bloc de données exporté doit atterrir
    (nouveau profil ou remplacement d'un profil existant) — sans jamais toucher, modifier
-   ou supprimer les AUTRES profils présents sur l'appareil. */
+   ou supprimer les AUTRES profils présents sur l'appareil.
+   Chaque profil étant totalement autonome (aucune donnée partagée), TOUTES ses données —
+   y compris son propre catalogue d'exercices/sports/catégories/muscles — sont incluses
+   dans l'export : le fichier est 100% autosuffisant, importable seul sur un autre appareil. */
 function collectExportBundle(profileIds){
   return {
-    type:'muscoplan-export', version:2, exportedAt:new Date().toISOString(),
-    global:{ sports:GLOBAL.sports, exercises:GLOBAL.exercises, categories:GLOBAL.categories, muscles:GLOBAL.muscles },
+    type:'muscoplan-export', version:3, exportedAt:new Date().toISOString(),
     profiles: profileIds.map(id=>{
       const p=(GLOBAL.profiles||[]).find(x=>x.id===id);
       return { id, name:p?p.name:'Profil', data:loadProfileData(id) };
@@ -865,34 +879,36 @@ function downloadJSON(obj, filename){
   const a=document.createElement('a'); a.href=url; a.download=filename; a.click();
   URL.revokeObjectURL(url);
 }
-/* Normalise un fichier importé (nouveau format multi-profils OU ancien export "Réglages"
-   mono-profil, qui exportait DB en entier à plat) en une liste homogène de blocs de données
-   profil à mapper : [{sourceName, data}]. Détecte aussi le catalogue partagé embarqué s'il existe. */
+/* Normalise un fichier importé en une liste homogène de blocs de données profil à mapper :
+   [{sourceName, data}] — data contient TOUJOURS son propre catalogue complet (sports,
+   exercises, categories, muscles), pour qu'un profil importé reste autonome, qu'il vienne :
+   - du format actuel (v3, chaque profil autonome, catalogue déjà inclus dans data) ;
+   - de l'ancien format (v2, catalogue partagé à part dans "global") : on le recopie dans
+     CHAQUE profil importé, pour qu'il n'y ait plus jamais rien de partagé après import ;
+   - de l'ancien export "Réglages" (DB à plat, un seul profil, catalogue déjà inclus). */
 function parseImportBundle(raw){
   if(raw && raw.type==='muscoplan-export' && Array.isArray(raw.profiles)){
-    return { global:raw.global||null, entries:raw.profiles.map(p=>({sourceName:p.name||'Profil', data:p.data||{}})) };
+    return { entries: raw.profiles.map(p=>{
+      const data=Object.assign({}, p.data||{});
+      if(raw.global){ // rétro-compat export v2 (catalogue encore partagé côté fichier)
+        if(!data.sports) data.sports=raw.global.sports;
+        if(!data.exercises) data.exercises=raw.global.exercises;
+        if(!data.categories) data.categories=raw.global.categories;
+        if(!data.muscles) data.muscles=raw.global.muscles;
+      }
+      return {sourceName:p.name||'Profil', data};
+    })};
   }
   /* Ancien format (Réglages > Exporter mes données) : DB entier à plat pour un seul profil. */
   const legacyName = (raw && raw.settings && raw.settings.activeProfileId && Array.isArray(raw.profiles))
     ? (raw.profiles.find(p=>p.id===raw.settings.activeProfileId)||{}).name : null;
   return {
-    global: raw ? {sports:raw.sports,exercises:raw.exercises,categories:raw.categories,muscles:raw.muscles} : null,
     entries: [{ sourceName: legacyName||'Import', data:{
+      sports:raw?.sports||[], exercises:raw?.exercises||[], categories:raw?.categories||[], muscles:raw?.muscles||[],
       blocks:raw?.blocks||[], routines:raw?.routines||[], sessions:raw?.sessions||[], bodylog:raw?.bodylog||[],
       nutrilog:raw?.nutrilog||[], injuries:raw?.injuries||[], goals:raw?.goals||[], settings:raw?.settings||{}
     }}]
   };
-}
-/* Fusionne le catalogue partagé embarqué dans un import (exercices/sports/catégories/muscles)
-   dans GLOBAL SANS jamais écraser ou dupliquer l'existant : n'ajoute que ce qui manque
-   (par id pour sports/exercices, par nom pour catégories/muscles). */
-function mergeGlobalCatalog(incoming){
-  if(!incoming) return;
-  (incoming.sports||[]).forEach(sp=>{ if(sp && !GLOBAL.sports.some(x=>x.id===sp.id)) GLOBAL.sports.push(sp); });
-  (incoming.exercises||[]).forEach(ex=>{ if(ex && !GLOBAL.exercises.some(x=>x.id===ex.id)) GLOBAL.exercises.push(ex); });
-  (incoming.categories||[]).forEach(c=>{ if(c && !GLOBAL.categories.includes(c)) GLOBAL.categories.push(c); });
-  (incoming.muscles||[]).forEach(m=>{ if(m && !GLOBAL.muscles.includes(m)) GLOBAL.muscles.push(m); });
-  saveGlobal();
 }
 function openLockDataTransferModal(){
   const profiles=GLOBAL.profiles||[];
@@ -923,7 +939,7 @@ function openLockDataTransferModal(){
       const reader=new FileReader();
       reader.onload=()=>{
         let raw; try{ raw=JSON.parse(reader.result); }catch(err){ toast('Fichier invalide'); return; }
-        const {global, entries} = parseImportBundle(raw);
+        const {entries} = parseImportBundle(raw);
         if(!entries.length){ toast('Aucune donnée de profil trouvée dans ce fichier'); return; }
         const existingOpts = profiles.map(p=>`<option value="${p.id}">Remplacer : ${p.name}</option>`).join('');
         $('#ldx-import-mapping',m).innerHTML = `
@@ -946,7 +962,6 @@ function openLockDataTransferModal(){
         $('#ldx-import-confirm',m).addEventListener('click',()=>{
           const replacingNames = $$('.ldx-map-target',m).filter(s=>s.value!=='__new__').map(s=>((GLOBAL.profiles||[]).find(p=>p.id===s.value)||{}).name||'?');
           if(replacingNames.length && !confirm(`Ceci va remplacer TOUTES les données de : ${replacingNames.join(', ')}. Les autres profils ne seront pas touchés. Continuer ?`)) return;
-          mergeGlobalCatalog(global);
           let created=0, replaced=0;
           $$('.ldx-map-target',m).forEach(sel=>{
             const i=+sel.dataset.idx; const en=entries[i];
@@ -2179,6 +2194,7 @@ function renderPrograms(){
   const tabs=[['blocks','Blocs'],['routines','Routines'],['exercises','Exercices'],['sports','Sports']];
   return `
   <div class="tabs-sub">${tabs.map(([k,l])=>`<button data-ptab="${k}" class="${PROG_TAB===k?'active':''}">${l}</button>`).join('')}</div>
+  ${(PROG_TAB==='blocks'||PROG_TAB==='routines')?`<button type="button" class="btn btn-ghost btn-sm" id="trigger-import-file" style="margin-bottom:12px;">📥 Importer un fichier JSON</button>`:''}
   ${PROG_TAB==='blocks'?renderBlocksTab():PROG_TAB==='routines'?renderRoutinesTab():PROG_TAB==='exercises'?renderExercisesTab():renderSportsTab()}
   `;
 }
@@ -2213,6 +2229,7 @@ function renderBlockDetail(){
     <button class="btn btn-secondary" data-week-block="${b.id}">📅 Semaine type</button>
     <button class="btn btn-ghost" data-dup-block="${b.id}">Dupliquer</button>
   </div>
+  <div class="row" style="margin-bottom:18px;">${shareButtonsRowHTML('block',b.id)}</div>
 
   <div class="section-title" style="margin-top:0;">Calendrier du bloc</div>
   <div class="card">${blockCalendarHTML(b)}</div>
@@ -2370,13 +2387,25 @@ function blockFormHTML(b={}){
    directement le silo localStorage du profil cible (loadProfileData/localStorage.setItem)
    SANS jamais charger ses autres données en mémoire dans DB — le profil actif ne voit
    et ne touche à aucun moment aux données personnelles de l'autre profil, seule la
-   routine copiée y est ajoutée. La routine reste aussi dans le profil d'origine. */
+   routine copiée y est ajoutée. La routine reste aussi dans le profil d'origine.
+   Comme plus rien n'est partagé entre profils (chacun a son propre catalogue), le
+   transfert embarque aussi une copie des exercices (+ leur exercice parent si variante),
+   du/des sport(s), catégories et muscles nécessaires — sinon la routine importée
+   référencerait des exercices inexistants chez le profil cible. */
+function collectExercisesToTransfer(routine){
+  const ids=new Set();
+  (routine.items||[]).forEach(it=>{
+    let ex=getExercise(it.exerciseId);
+    while(ex){ ids.add(ex.id); ex = ex.variantOf ? getExercise(ex.variantOf) : null; }
+  });
+  return DB.exercises.filter(e=>ids.has(e.id));
+}
 function openTransferRoutineModal(routineId){
   const r=getRoutine(routineId); if(!r) return;
   const targets=(GLOBAL.profiles||[]).filter(p=>p.id!==CURRENT_PROFILE_ID);
   if(!targets.length){ toast('Aucun autre profil sur cet appareil'); return; }
   openModal('Transférer "'+r.name+'"',`
-    <div style="font-size:12.5px;color:var(--text-dim);margin-bottom:12px;">Une copie de cette routine sera ajoutée au profil choisi (elle reste aussi dans ${profileName(CURRENT_PROFILE_ID)}).</div>
+    <div style="font-size:12.5px;color:var(--text-dim);margin-bottom:12px;">Une copie de cette routine (et des exercices qu'elle utilise) sera ajoutée au profil choisi — elle reste aussi dans ${profileName(CURRENT_PROFILE_ID)}.</div>
     <div id="transfer-target-list">
     ${targets.map(p=>`<button type="button" class="list-item" data-transfer-target="${p.id}" style="width:100%;background:none;border:none;cursor:pointer;text-align:left;">
       <div class="swatch" style="background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;border-radius:50%;">${initial2(p.name)}</div>
@@ -2391,11 +2420,231 @@ function openTransferRoutineModal(routineId){
       copy.id=uid();
       copy.blockId=null; /* un bloc est propre à un profil : la copie en est détachée */
       pd.routines.push(copy);
+      /* Copie des exercices (+ parent si variante) référencés, jamais en double (par id) */
+      collectExercisesToTransfer(r).forEach(ex=>{
+        if(!pd.exercises.some(e=>e.id===ex.id)) pd.exercises.push(JSON.parse(JSON.stringify(ex)));
+        if(ex.category && !pd.categories.includes(ex.category)) pd.categories.push(ex.category);
+        muscleArr(ex).forEach(mu=>{ if(mu && !pd.muscles.includes(mu)) pd.muscles.push(mu); });
+      });
+      const sport=getSport(r.sportId);
+      if(sport && !pd.sports.some(s=>s.id===sport.id)) pd.sports.push(JSON.parse(JSON.stringify(sport)));
       localStorage.setItem(profileStorageKey(targetId), JSON.stringify(pd));
       closeModal();
       toast('Routine transférée vers '+profileName(targetId));
     }));
   }});
+}
+/* ============================================================
+   PARTAGE DE PROGRAMMES — export/import "en cascade" (Bloc → Routines → Exercices)
+   Un paquet exporté est TOUJOURS autosuffisant : un Bloc embarque ses Routines, qui
+   embarquent elles-mêmes les Exercices utilisés (+ leur exercice parent si variante,
+   + le sport correspondant). À l'import, dédoublonnage par NOM (insensible à la casse) :
+   si un exercice ou une routine du même nom existe déjà chez le destinataire, il est
+   réutilisé au lieu d'être dupliqué — seul ce qui manque vraiment est créé.
+   ------------------------------------------------------------
+   STRUCTURE JSON D'UN PAQUET D'EXPORT :
+   {
+     "type": "muscoplan-program-export", "version": 1,
+     "kind": "block" | "routine" | "exercise",       // ce qui a été exporté à l'origine
+     "exportedAt": "2026-09-02T10:00:00.000Z",
+     "sports":    [ {id,name,type,color,bodyweightBased}, ... ],   // sports référencés
+     "exercises": [ {id,sportId,name,category,primaryMuscle,weightIncrement,minReps,maxReps,polyarticular,variantOf}, ... ],
+     "routines":  [ {id,name,sportId,items:[{exerciseId,targetSets,targetReps}, ...]}, ... ],
+     "block":     {id,name,blockType,startDate,endDate,sportIds,weeklyPlan:{"0":[routineId,...],...}} | null
+   }
+   ============================================================ */
+/* Trie une liste d'exercices pour que tout exercice parent (variantOf) apparaisse AVANT
+   ses variantes — nécessaire pour reconstruire les liens variantOf lors de l'import. */
+function sortExercisesParentsFirst(exs){
+  const byId={}; exs.forEach(e=>byId[e.id]=e);
+  const result=[], seen=new Set();
+  function addEx(ex){
+    if(!ex || seen.has(ex.id)) return;
+    if(ex.variantOf && byId[ex.variantOf]) addEx(byId[ex.variantOf]);
+    seen.add(ex.id); result.push(ex);
+  }
+  exs.forEach(addEx);
+  return result;
+}
+function collectExercisesForRoutines(routines){
+  const ids=new Set();
+  routines.forEach(r=>(r.items||[]).forEach(it=>{
+    let ex=getExercise(it.exerciseId);
+    while(ex){ ids.add(ex.id); ex = ex.variantOf ? getExercise(ex.variantOf) : null; }
+  }));
+  return sortExercisesParentsFirst(DB.exercises.filter(e=>ids.has(e.id)));
+}
+function buildExportPackage(type, id){
+  let kind=type, block=null, routines=[], exercises=[];
+  if(type==='exercise'){
+    const ex=getExercise(id); if(!ex) return null;
+    exercises=sortExercisesParentsFirst(ex.variantOf ? [getExercise(ex.variantOf), ex].filter(Boolean) : [ex]);
+  } else if(type==='routine'){
+    const r=getRoutine(id); if(!r) return null;
+    routines=[r]; exercises=collectExercisesForRoutines(routines);
+  } else if(type==='block'){
+    const b=getBlock(id); if(!b) return null;
+    const routineIds=new Set();
+    Object.values(b.weeklyPlan||{}).forEach(arr=>(arr||[]).forEach(rid=>routineIds.add(rid)));
+    routines=[...routineIds].map(getRoutine).filter(Boolean);
+    exercises=collectExercisesForRoutines(routines);
+    block=b;
+  } else return null;
+  const sportIds=new Set(exercises.map(e=>e.sportId));
+  routines.forEach(r=>sportIds.add(r.sportId));
+  if(block) (block.sportIds||[]).forEach(id2=>sportIds.add(id2));
+  const sports=DB.sports.filter(s=>sportIds.has(s.id));
+  return {type:'muscoplan-program-export',version:1,kind,exportedAt:new Date().toISOString(),sports,exercises,routines,block};
+}
+/* exportData(type, id) — génère et télécharge le fichier JSON. type: 'block'|'routine'|'exercise' */
+function exportData(type, id){
+  const pkg=buildExportPackage(type,id);
+  if(!pkg){ toast('Rien à exporter'); return; }
+  const name = pkg.block?pkg.block.name : (pkg.routines[0]&&pkg.routines[0].name) || (pkg.exercises[pkg.exercises.length-1]&&pkg.exercises[pkg.exercises.length-1].name) || 'export';
+  downloadJSON(pkg, `muscoplan-${pkg.kind}-${String(name).toLowerCase().replace(/[^a-z0-9]+/g,'-')}-${todayISO()}.json`);
+  toast('Export lancé');
+}
+/* generateShareLink(data) — encode le paquet en Base64 (unicode-safe) dans le hash de l'URL. */
+function generateShareLink(data){
+  const json=JSON.stringify(data);
+  const b64=btoa(unescape(encodeURIComponent(json)));
+  const url=new URL(location.href);
+  url.hash='import='+b64;
+  return url.toString();
+}
+function copyShareLink(type,id){
+  const pkg=buildExportPackage(type,id);
+  if(!pkg){ toast('Rien à partager'); return; }
+  const link=generateShareLink(pkg);
+  const done=()=>toast('Lien de partage copié !');
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(link).then(done).catch(()=>showLinkFallback(link));
+  } else showLinkFallback(link);
+}
+function showLinkFallback(link){
+  openModal('Lien de partage',`
+    <div class="helper-text" style="margin-bottom:8px;">La copie automatique n'est pas disponible ici — sélectionne et copie le lien ci-dessous.</div>
+    <input id="share-link-fallback" value="${link.replace(/"/g,'&quot;')}" readonly style="width:100%;margin-bottom:10px;">
+    <button class="btn btn-primary" id="share-link-copy-fallback" style="width:100%;">Copier</button>
+  `,{onMount:(m)=>{
+    const inp=$('#share-link-fallback',m); inp.focus(); inp.select();
+    $('#share-link-copy-fallback',m).addEventListener('click',()=>{ inp.select(); document.execCommand('copy'); toast('Copié !'); });
+  }});
+}
+/* Aperçu SANS écrire dans DB : ce que l'import ajouterait vs réutiliserait, par nom. */
+function previewImportPackage(pkg){
+  const newExercises=(pkg.exercises||[]).filter(ex=>!DB.exercises.some(e=>e.name.trim().toLowerCase()===String(ex.name).trim().toLowerCase()));
+  const newRoutines=(pkg.routines||[]).filter(r=>!DB.routines.some(x=>x.name.trim().toLowerCase()===String(r.name).trim().toLowerCase()));
+  return {
+    kind:pkg.kind, blockName: pkg.block?pkg.block.name:null,
+    routinesTotal:(pkg.routines||[]).length, routinesNew:newRoutines.length,
+    exercisesTotal:(pkg.exercises||[]).length, exercisesNew:newExercises.length
+  };
+}
+/* importDataFromJSON(jsonContent) — cascade Exercices -> Routines -> Bloc dans le profil ACTIF.
+   jsonContent peut être une chaîne JSON ou déjà un objet parsé. Dédoublonnage par nom. */
+function importDataFromJSON(jsonContent){
+  const pkg = typeof jsonContent==='string' ? JSON.parse(jsonContent) : jsonContent;
+  if(!pkg || pkg.type!=='muscoplan-program-export') throw new Error('Format de fichier non reconnu');
+  if(!CURRENT_PROFILE_ID || !DB) throw new Error('Aucun profil actif');
+
+  // 0) Sports référencés : on ajoute ceux qui manquent (par id), jamais en double.
+  (pkg.sports||[]).forEach(sp=>{ if(sp && !DB.sports.some(s=>s.id===sp.id)) DB.sports.push(JSON.parse(JSON.stringify(sp))); });
+
+  // 1) Exercices (parents avant variantes) : réutilise par nom, sinon crée avec son propre weightIncrement.
+  const exIdMap={}; let exercisesCreated=0, exercisesReused=0;
+  sortExercisesParentsFirst(pkg.exercises||[]).forEach(ex=>{
+    const existing=DB.exercises.find(e=>e.name.trim().toLowerCase()===String(ex.name).trim().toLowerCase());
+    if(existing){ exIdMap[ex.id]=existing.id; exercisesReused++; return; }
+    const copy=JSON.parse(JSON.stringify(ex));
+    copy.id=uid();
+    copy.variantOf = ex.variantOf ? (exIdMap[ex.variantOf]||null) : null;
+    if(!DB.sports.some(s=>s.id===copy.sportId)) copy.sportId=(DB.sports[0]||{}).id||copy.sportId;
+    DB.exercises.push(copy);
+    exIdMap[ex.id]=copy.id;
+    if(copy.category && !DB.categories.includes(copy.category)) DB.categories.push(copy.category);
+    muscleArr(copy).forEach(mu=>{ if(mu && !DB.muscles.includes(mu)) DB.muscles.push(mu); });
+    exercisesCreated++;
+  });
+
+  // 2) Routines : réutilise par nom, sinon crée en remappant chaque exerciseId vers l'exercice réel.
+  const routineIdMap={}; let routinesCreated=0, routinesReused=0;
+  (pkg.routines||[]).forEach(r=>{
+    const existing=DB.routines.find(x=>x.name.trim().toLowerCase()===String(r.name).trim().toLowerCase());
+    if(existing){ routineIdMap[r.id]=existing.id; routinesReused++; return; }
+    const copy=JSON.parse(JSON.stringify(r));
+    copy.id=uid();
+    copy.items=(copy.items||[]).map(it=>({...it, exerciseId: exIdMap[it.exerciseId]||it.exerciseId}));
+    if(!DB.sports.some(s=>s.id===copy.sportId)) copy.sportId=(DB.sports[0]||{}).id||copy.sportId;
+    DB.routines.push(copy);
+    routineIdMap[r.id]=copy.id;
+    routinesCreated++;
+  });
+
+  // 3) Bloc (toujours créé tel quel — seul son planning est remappé vers les routines réelles).
+  let blockCreated=false, blockName=null;
+  if(pkg.block){
+    const b=JSON.parse(JSON.stringify(pkg.block));
+    b.id=uid(); b.profileId=CURRENT_PROFILE_ID;
+    const newPlan={};
+    Object.keys(b.weeklyPlan||{}).forEach(day=>{ newPlan[day]=(b.weeklyPlan[day]||[]).map(rid=>routineIdMap[rid]).filter(Boolean); });
+    b.weeklyPlan=newPlan;
+    DB.blocks.push(b);
+    blockCreated=true; blockName=b.name;
+  }
+  saveDB();
+  return {exercisesCreated,exercisesReused,routinesCreated,routinesReused,blockCreated,blockName,kind:pkg.kind};
+}
+/* Modal de confirmation, commune à l'import fichier ET au lien de partage : aperçu SANS
+   rien écrire, puis import réel seulement si l'utilisateur clique sur "Importer". */
+function openImportPreviewModal(pkg){
+  if(!pkg || pkg.type!=='muscoplan-program-export'){ toast('Fichier ou lien invalide'); return; }
+  const summary=previewImportPackage(pkg);
+  const title = summary.blockName || (pkg.routines&&pkg.routines[0]&&pkg.routines[0].name) || (pkg.exercises&&pkg.exercises.length&&pkg.exercises[pkg.exercises.length-1].name) || 'Programme';
+  const reused=(total,news)=>total-news>0?`, ${total-news} déjà existant${total-news>1?'s':''} réutilisé${total-news>1?'s':''}`:'';
+  openModal(`Importer « ${title} » ?`,`
+    <div class="helper-text" style="margin-bottom:12px;">Voici ce qui sera ajouté à ton profil (${profileName(CURRENT_PROFILE_ID)}) :</div>
+    <div class="card" style="margin-bottom:14px;display:flex;flex-direction:column;gap:6px;">
+      ${summary.kind==='block'?`<div style="font-size:13px;">📦 1 Bloc — <strong>${title}</strong></div>`:''}
+      ${summary.routinesTotal?`<div style="font-size:13px;">📋 ${summary.routinesTotal} Routine${summary.routinesTotal>1?'s':''} (${summary.routinesNew} nouvelle${summary.routinesNew>1?'s':''}${reused(summary.routinesTotal,summary.routinesNew)})</div>`:''}
+      <div style="font-size:13px;">🏋️ ${summary.exercisesTotal} Exercice${summary.exercisesTotal>1?'s':''} (${summary.exercisesNew} nouveau${summary.exercisesNew>1?'x':''}${reused(summary.exercisesTotal,summary.exercisesNew)})</div>
+    </div>
+    <button class="btn btn-primary" id="confirm-cascade-import" style="width:100%;">Importer</button>
+  `,{onMount:(m)=>{
+    $('#confirm-cascade-import',m).addEventListener('click',()=>{
+      try{
+        const result=importDataFromJSON(pkg);
+        closeModal();
+        toast(`Import réussi — ${result.exercisesCreated} nouvel(aux) exercice(s)${result.routinesCreated?`, ${result.routinesCreated} nouvelle(s) routine(s)`:''}${result.blockCreated?', 1 bloc':''}`);
+        render();
+      }catch(err){ console.error(err); toast("Erreur pendant l'import : "+err.message); }
+    });
+  }});
+}
+/* checkURLForSharedProgram() — détecte #import=... dans l'URL. Le hash est nettoyé
+   immédiatement (pour ne pas re-déclencher au moindre re-rendu) ; si aucun profil n'est
+   encore actif (lien ouvert avant même la sélection de profil), l'import est mis en
+   attente et proposé automatiquement juste après l'entrée dans un profil. */
+let PENDING_SHARE_IMPORT=null;
+function checkURLForSharedProgram(){
+  const m=location.hash.match(/[#&]import=([^&]+)/);
+  if(!m) return;
+  const b64=m[1];
+  history.replaceState(null,'',location.pathname+location.search);
+  try{
+    const json=decodeURIComponent(escape(atob(b64)));
+    const pkg=JSON.parse(json);
+    if(CURRENT_PROFILE_ID && DB) openImportPreviewModal(pkg);
+    else PENDING_SHARE_IMPORT=pkg;
+  }catch(e){ console.error('Lien de partage MuscoPlan invalide', e); toast('Lien de partage invalide'); }
+}
+/* Boutons Exporter/Partager réutilisables pour un bloc ou une routine. */
+function shareButtonsRowHTML(type,id){
+  return `<button class="btn btn-ghost btn-sm" data-export-item="${type}:${id}">⬇ Exporter</button><button class="btn btn-ghost btn-sm" data-share-item="${type}:${id}">🔗 Copier le lien</button>`;
+}
+function bindShareButtons(root){
+  $$('[data-export-item]',root).forEach(b=>b.addEventListener('click',(e)=>{ e.stopPropagation(); const [type,id]=b.dataset.exportItem.split(':'); exportData(type,id); }));
+  $$('[data-share-item]',root).forEach(b=>b.addEventListener('click',(e)=>{ e.stopPropagation(); const [type,id]=b.dataset.shareItem.split(':'); copyShareLink(type,id); }));
 }
 function renderRoutinesTab(){
   const list=[...DB.routines].sort((a,b)=>(a.name||'').localeCompare(b.name));
@@ -2410,6 +2659,7 @@ function renderRoutinesTab(){
       <div class="row"><button class="btn btn-secondary btn-sm" data-edit-routine="${r.id}">Modifier</button><button class="btn btn-secondary btn-sm" data-plan-routine="${r.id}">Planifier</button></div>
       <div class="row" style="margin-top:8px;"><button class="btn btn-ghost btn-sm" data-dup-routine="${r.id}">Dupliquer</button><button class="btn btn-danger btn-sm" data-del-routine="${r.id}">Suppr.</button></div>
       <div class="row" style="margin-top:8px;"><button class="btn btn-ghost btn-sm" data-transfer-routine="${r.id}" style="width:100%;">⇄ Transférer vers un autre profil</button></div>
+      <div class="row" style="margin-top:8px;">${shareButtonsRowHTML('routine',r.id)}</div>
     </div>`;
   }).join('') : ''}
   </div>
@@ -2645,6 +2895,8 @@ function renderSportsTab(){
    ============================================================ */
 function bindProgramsEvents(){
   $$('[data-ptab]').forEach(b=>b.addEventListener('click',()=>{PROG_TAB=b.dataset.ptab;render();}));
+  $('#trigger-import-file')?.addEventListener('click',()=>$('#importFileInput').click());
+  bindShareButtons(document);
 
   const addBlockBtn=$('#add-block');
   if(addBlockBtn) addBlockBtn.addEventListener('click',()=>openBlockModal());
@@ -3658,9 +3910,24 @@ window.addEventListener('beforeinstallprompt',(e)=>{ e.preventDefault(); DEFERRE
 /* ---------- Notif icon = go today ---------- */
 $('#btn-notif').addEventListener('click',()=>{ CAL_ANCHOR=todayISO(); if(ROUTE!=='dashboard') navigate('dashboard'); else renderCalendar(); });
 
+/* ---------- Import de fichier JSON (partage de programmes) — élément statique, câblé une seule fois ---------- */
+$('#importFileInput').addEventListener('change',(e)=>{
+  const file=e.target.files[0]; if(!file) return;
+  const reader=new FileReader();
+  reader.onload=()=>{
+    try{
+      const pkg=JSON.parse(reader.result);
+      openImportPreviewModal(pkg);
+    }catch(err){ toast('Fichier JSON invalide'); }
+    e.target.value=''; // permet de réimporter le même fichier plusieurs fois de suite
+  };
+  reader.readAsText(file);
+});
+
 /* ---------- Init ---------- */
 migrateLegacyIfNeeded();
 GLOBAL=loadGlobal();
+checkURLForSharedProgram();
 showLockscreen();
 
 </script>
