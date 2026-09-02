@@ -839,7 +839,142 @@ function renderLockscreen(){
     <div class="card" style="margin-top:14px;">
       <div class="row"><input id="lock-new-name" placeholder="Prénom (ex: Anthony)" style="flex:1;"><button type="button" class="btn btn-primary btn-sm" id="lock-new-btn" style="flex:0 0 auto;">Créer</button></div>
     </div>
+    <button type="button" class="btn btn-secondary" id="lock-data-transfer-btn" style="width:100%;margin-top:10px;">⇅ Importer / exporter des données</button>
   </div>`;
+}
+/* ============================================================
+   TRANSFERT DE DONNÉES DEPUIS L'ÉCRAN D'ACCUEIL
+   Contrairement à Réglages > Exporter/Importer (qui n'agit que sur le profil actif),
+   cet outil permet de choisir UN OU PLUSIEURS profils précis à exporter (cases à cocher),
+   et à l'import de choisir dans QUEL profil chaque bloc de données exporté doit atterrir
+   (nouveau profil ou remplacement d'un profil existant) — sans jamais toucher, modifier
+   ou supprimer les AUTRES profils présents sur l'appareil. */
+function collectExportBundle(profileIds){
+  return {
+    type:'muscoplan-export', version:2, exportedAt:new Date().toISOString(),
+    global:{ sports:GLOBAL.sports, exercises:GLOBAL.exercises, categories:GLOBAL.categories, muscles:GLOBAL.muscles },
+    profiles: profileIds.map(id=>{
+      const p=(GLOBAL.profiles||[]).find(x=>x.id===id);
+      return { id, name:p?p.name:'Profil', data:loadProfileData(id) };
+    })
+  };
+}
+function downloadJSON(obj, filename){
+  const blob=new Blob([JSON.stringify(obj,null,2)],{type:'application/json'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a'); a.href=url; a.download=filename; a.click();
+  URL.revokeObjectURL(url);
+}
+/* Normalise un fichier importé (nouveau format multi-profils OU ancien export "Réglages"
+   mono-profil, qui exportait DB en entier à plat) en une liste homogène de blocs de données
+   profil à mapper : [{sourceName, data}]. Détecte aussi le catalogue partagé embarqué s'il existe. */
+function parseImportBundle(raw){
+  if(raw && raw.type==='muscoplan-export' && Array.isArray(raw.profiles)){
+    return { global:raw.global||null, entries:raw.profiles.map(p=>({sourceName:p.name||'Profil', data:p.data||{}})) };
+  }
+  /* Ancien format (Réglages > Exporter mes données) : DB entier à plat pour un seul profil. */
+  const legacyName = (raw && raw.settings && raw.settings.activeProfileId && Array.isArray(raw.profiles))
+    ? (raw.profiles.find(p=>p.id===raw.settings.activeProfileId)||{}).name : null;
+  return {
+    global: raw ? {sports:raw.sports,exercises:raw.exercises,categories:raw.categories,muscles:raw.muscles} : null,
+    entries: [{ sourceName: legacyName||'Import', data:{
+      blocks:raw?.blocks||[], routines:raw?.routines||[], sessions:raw?.sessions||[], bodylog:raw?.bodylog||[],
+      nutrilog:raw?.nutrilog||[], injuries:raw?.injuries||[], goals:raw?.goals||[], settings:raw?.settings||{}
+    }}]
+  };
+}
+/* Fusionne le catalogue partagé embarqué dans un import (exercices/sports/catégories/muscles)
+   dans GLOBAL SANS jamais écraser ou dupliquer l'existant : n'ajoute que ce qui manque
+   (par id pour sports/exercices, par nom pour catégories/muscles). */
+function mergeGlobalCatalog(incoming){
+  if(!incoming) return;
+  (incoming.sports||[]).forEach(sp=>{ if(sp && !GLOBAL.sports.some(x=>x.id===sp.id)) GLOBAL.sports.push(sp); });
+  (incoming.exercises||[]).forEach(ex=>{ if(ex && !GLOBAL.exercises.some(x=>x.id===ex.id)) GLOBAL.exercises.push(ex); });
+  (incoming.categories||[]).forEach(c=>{ if(c && !GLOBAL.categories.includes(c)) GLOBAL.categories.push(c); });
+  (incoming.muscles||[]).forEach(m=>{ if(m && !GLOBAL.muscles.includes(m)) GLOBAL.muscles.push(m); });
+  saveGlobal();
+}
+function openLockDataTransferModal(){
+  const profiles=GLOBAL.profiles||[];
+  openModal('Importer / exporter des données',`
+    <div class="section-title" style="margin-top:0;">Exporter</div>
+    <div class="helper-text" style="margin-bottom:6px;">Choisis un ou plusieurs profils à exporter dans un seul fichier. Les autres profils ne sont ni lus ni inclus.</div>
+    ${profiles.length? `<div id="ldx-export-list" style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px;">
+      ${profiles.map(p=>`<label class="list-item" style="cursor:pointer;"><input type="checkbox" class="ldx-export-cb" data-pid="${p.id}" style="width:18px;height:18px;flex:0 0 auto;"><div class="main"><div class="title">${p.name}</div></div></label>`).join('')}
+    </div>
+    <button type="button" class="btn btn-secondary" id="ldx-export-btn" style="width:100%;margin-bottom:18px;">Exporter la sélection</button>`
+    : `<div class="helper-text">Aucun profil à exporter pour l'instant.</div>`}
+
+    <div class="section-title">Importer</div>
+    <div class="helper-text" style="margin-bottom:6px;">Importe un fichier exporté depuis MuscoPlan. Pour chaque profil contenu dans le fichier, choisis s'il doit créer un nouveau profil ou remplacer un profil existant — les profils non concernés restent intacts.</div>
+    <input type="file" accept="application/json" id="ldx-import-file" style="margin-bottom:10px;">
+    <div id="ldx-import-mapping"></div>
+  `,{onMount:(m)=>{
+    $('#ldx-export-btn',m)?.addEventListener('click',()=>{
+      const ids=$$('.ldx-export-cb',m).filter(cb=>cb.checked).map(cb=>cb.dataset.pid);
+      if(!ids.length){ toast('Choisis au moins un profil'); return; }
+      const bundle=collectExportBundle(ids);
+      const firstName=((GLOBAL.profiles||[]).find(p=>p.id===ids[0])||{}).name||'profil';
+      downloadJSON(bundle, `muscoplan-export-${ids.length>1?'multi':firstName.toLowerCase().replace(/[^a-z0-9]+/g,'-')}-${todayISO()}.json`);
+      toast('Export lancé');
+    });
+    $('#ldx-import-file',m).addEventListener('change',(e)=>{
+      const file=e.target.files[0]; if(!file) return;
+      const reader=new FileReader();
+      reader.onload=()=>{
+        let raw; try{ raw=JSON.parse(reader.result); }catch(err){ toast('Fichier invalide'); return; }
+        const {global, entries} = parseImportBundle(raw);
+        if(!entries.length){ toast('Aucune donnée de profil trouvée dans ce fichier'); return; }
+        const existingOpts = profiles.map(p=>`<option value="${p.id}">Remplacer : ${p.name}</option>`).join('');
+        $('#ldx-import-mapping',m).innerHTML = `
+          ${entries.map((en,i)=>`<div class="list-item" style="align-items:flex-start;">
+            <div class="main">
+              <div class="title">${en.sourceName}</div>
+              <select class="ldx-map-target" data-idx="${i}" style="margin-top:6px;width:100%;">
+                <option value="__new__">Créer un nouveau profil</option>
+                ${existingOpts}
+              </select>
+              <input class="ldx-map-newname" data-idx="${i}" placeholder="Nom du nouveau profil" value="${en.sourceName.replace(/"/g,'&quot;')}" style="margin-top:6px;width:100%;">
+            </div>
+          </div>`).join('')}
+          <button type="button" class="btn btn-primary" id="ldx-import-confirm" style="width:100%;margin-top:10px;">Importer</button>
+        `;
+        $$('.ldx-map-target',m).forEach(sel=>sel.addEventListener('change',()=>{
+          const nameInp=m.querySelector(`.ldx-map-newname[data-idx="${sel.dataset.idx}"]`);
+          if(nameInp) nameInp.style.display = sel.value==='__new__'?'block':'none';
+        }));
+        $('#ldx-import-confirm',m).addEventListener('click',()=>{
+          const replacingNames = $$('.ldx-map-target',m).filter(s=>s.value!=='__new__').map(s=>((GLOBAL.profiles||[]).find(p=>p.id===s.value)||{}).name||'?');
+          if(replacingNames.length && !confirm(`Ceci va remplacer TOUTES les données de : ${replacingNames.join(', ')}. Les autres profils ne seront pas touchés. Continuer ?`)) return;
+          mergeGlobalCatalog(global);
+          let created=0, replaced=0;
+          $$('.ldx-map-target',m).forEach(sel=>{
+            const i=+sel.dataset.idx; const en=entries[i];
+            const pd=Object.assign(defaultProfileData(), en.data);
+            pd.settings=Object.assign(defaultProfileData().settings, en.data.settings||{});
+            if(sel.value==='__new__'){
+              const nameInp=m.querySelector(`.ldx-map-newname[data-idx="${i}"]`);
+              const name=(nameInp&&nameInp.value.trim())||en.sourceName||'Profil importé';
+              const p={id:uid(),name};
+              GLOBAL.profiles=GLOBAL.profiles||[]; GLOBAL.profiles.push(p);
+              pd.settings.activeProfileId=p.id;
+              localStorage.setItem(profileStorageKey(p.id), JSON.stringify(pd));
+              created++;
+            } else {
+              pd.settings.activeProfileId=sel.value;
+              localStorage.setItem(profileStorageKey(sel.value), JSON.stringify(pd));
+              replaced++;
+            }
+          });
+          saveGlobal();
+          closeModal();
+          toast(`Import terminé — ${created} nouveau(x) profil(s), ${replaced} remplacé(s)`);
+          showLockscreen();
+        });
+      };
+      reader.readAsText(file);
+    });
+  }});
 }
 function bindLockscreenEvents(){
   const root=$('#lockscreen');
@@ -853,6 +988,7 @@ function bindLockscreenEvents(){
   };
   $('#lock-new-btn',root).addEventListener('click',createFn);
   $('#lock-new-name',root).addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); createFn(); } });
+  $('#lock-data-transfer-btn',root).addEventListener('click',openLockDataTransferModal);
 }
 function showLockscreen(){
   $('#layout').style.display='none';
